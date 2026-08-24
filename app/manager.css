@@ -38,23 +38,19 @@ html, body {
   line-height: 1.6;
 }
 
-/* ── 顶栏 ───────────────────────────── */
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  padding: 12px 24px;
-  background: rgba(247, 242, 233, 0.82);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: var(--border);
+/* ── 头部（标题 + 状态，参考 dsh-plugin-manager）── */
+.hdr {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 24px 6px;
 }
+.hdr h1 { font-size: 18px; margin: 0; font-weight: 700; letter-spacing: 0.3px; color: var(--text); }
+.hdr .rt { display: flex; gap: 8px; align-items: center; font-size: 12px; }
 
-.brand { display: flex; align-items: center; gap: 10px; min-width: 200px; }
+.brand { display: flex; align-items: center; gap: 10px; }
 .brand .logo {
   width: 34px; height: 34px; border-radius: 10px;
   display: grid; place-items: center;
@@ -62,21 +58,44 @@ html, body {
   color: #fff; box-shadow: var(--shadow-sm);
 }
 .brand .logo svg { width: 20px; height: 20px; }
-.brand h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.3px; }
-.brand small { display: block; font-size: 11px; color: var(--text-2); font-weight: 400; }
 
-.status-hud { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
 .hud-item {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 12px; border-radius: 20px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border-radius: 20px;
   background: var(--bg-card); border: var(--border);
   font-size: 12px; color: var(--text-2);
   box-shadow: var(--shadow-sm);
+  white-space: nowrap;
 }
 .hud-item b { color: var(--text); font-weight: 600; }
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 rgba(46,125,91,0.4); animation: pulse 2s infinite; }
 .pulse.off { background: var(--err); animation: none; box-shadow: none; }
 .pulse.warn { background: var(--warn); animation: none; box-shadow: none; }
+
+/* ── HANA_HOME 路径条 + Tab（参考 dsh-plugin-manager）── */
+.path-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 24px 16px;
+  padding: 10px 14px;
+  border: var(--border);
+  border-radius: 12px;
+}
+.glass { background: var(--bg-card); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); box-shadow: var(--shadow-sm); }
+.path-bar .path-info { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; }
+.path-bar .path-label { color: var(--text-2); font-weight: 600; flex-shrink: 0; }
+.path-bar .path-value {
+  font-family: Consolas, "JetBrains Mono", monospace;
+  background: var(--bg-deep); padding: 3px 9px; border-radius: 7px;
+  max-width: min(520px, 60vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text);
+}
+/* path-bar 内的 Tab：透明背景融入玻璃条，避免双重卡片 */
+.path-bar .tabs { background: transparent; border: none; box-shadow: none; padding: 0; gap: 4px; }
+.path-bar .tab.active { box-shadow: var(--shadow-sm); }
 
 /* ── Tab 导航 ────────────────────────── */
 .tabs { display: flex; gap: 4px; padding: 4px; background: var(--bg-card); border: var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); }

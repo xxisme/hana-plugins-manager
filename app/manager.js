@@ -450,22 +450,23 @@
       <div class="disclaimer">${esc(r.disclaimer)}</div>`;
   }
 
-  // 内联安装状态更新区（不虚化背景）
-  const INSTALL_STAGE_META = {
+  // 内联状态更新区（不虚化背景；安装/更新共用）
+  const STAGE_META = {
     idle: { icon: '○', cls: '' },
     parsing: { icon: '⟳', cls: 'busy', text: '解析仓库…' },
     downloading: { icon: '⬇', cls: 'busy', text: '下载源码…' },
     analyzing: { icon: '⟳', cls: 'busy', text: '风险检测中…' },
+    checking: { icon: '⟳', cls: 'busy', text: '检测更新中…' },
     ready: { icon: '✓', cls: 'ok', text: '检测通过，等待确认安装' },
     installing: { icon: '⟳', cls: 'busy', text: '安装中…' },
-    success: { icon: '✔', cls: 'ok', text: '安装成功' },
-    failed: { icon: '✖', cls: 'err', text: '安装失败' },
+    success: { icon: '✔', cls: 'ok', text: '完成' },
+    failed: { icon: '✖', cls: 'err', text: '失败' },
     warning: { icon: '⚠', cls: 'warn', text: '警告' },
   };
-  function setInstallStatus(stage, msg) {
-    const el = $('install-status');
+  function setInstallStatus(stage, msg, containerId) {
+    const el = $(containerId || 'install-status');
     if (!el) return;
-    const meta = INSTALL_STAGE_META[stage] || INSTALL_STAGE_META.idle;
+    const meta = STAGE_META[stage] || STAGE_META.idle;
     const busy = meta.cls === 'busy';
     const spinner = busy ? '<span class="spinner-inline"></span>' : '';
     el.innerHTML = `<div class="install-status-row ${meta.cls}">${spinner}<span class="is-icon">${meta.icon}</span><span>${esc(msg || meta.text || '')}</span></div>`;
@@ -567,14 +568,22 @@
 
   // ── 更新页 ───────────────────────────────
   async function loadUpdates(force) {
-    showLoading('检测更新…');
+    setInstallStatus('checking', '', 'update-status');
     const q = force ? '?force=1' : '';
     const r = await api('GET', '/api/updates/check' + q, undefined, { timeoutMs: 30000 });
-    hideLoading();
-    if (!r || !r.ok) { $('update-body').innerHTML = `<div class="empty">${esc((r && r.error) || '检测失败')}</div>`; return; }
+    if (!r || !r.ok) {
+      setInstallStatus('failed', (r && r.error) || '检测失败', 'update-status');
+      $('update-body').innerHTML = `<div class="empty">${esc((r && r.error) || '检测失败')}</div>`;
+      return;
+    }
     STATE.updates = r.plugins || [];
     STATE.updateSel = new Set(STATE.updates.filter((p) => p.hasUpdate).map((p) => p.id));
     renderUpdates();
+    const updatable = STATE.updates.filter((p) => p.hasUpdate).length;
+    const failed = STATE.updates.filter((p) => p.status === 'check-failed').length;
+    if (updatable) setInstallStatus('success', `检测完成：${updatable} 个插件可更新${failed ? `，${failed} 个检测失败` : ''}`, 'update-status');
+    else if (failed) setInstallStatus('warning', `检测完成：${failed} 个插件检测失败`, 'update-status');
+    else setInstallStatus('success', '检测完成：所有插件均已最新或未关联 GitHub', 'update-status');
   }
 
   function renderUpdates() {
@@ -615,15 +624,20 @@
     if (!ids.length) { toast('请先勾选要更新的插件', 'warning'); return; }
     const ok = await modal('批量更新', `将对 ${ids.length} 个插件执行更新，更新前会自动备份旧版本。继续？`, { confirmText: '开始更新' });
     if (!ok) return;
-    showLoading('更新中（逐个执行）…');
     let done = 0, success = 0;
     for (const id of ids) {
-      const r = await api('POST', '/api/updates/apply', { id }, { timeoutMs: 120000 });
       done += 1;
-      if (r && r.ok) success += 1;
-      $('update-progress').textContent = `进度 ${done}/${ids.length}`;
+      setInstallStatus('checking', `正在更新 ${done}/${ids.length}：${id}…`, 'update-status');
+      const r = await api('POST', '/api/updates/apply', { id }, { timeoutMs: 120000 });
+      if (r && r.ok) {
+        success += 1;
+        setInstallStatus('success', `(${done}/${ids.length}) ${id} 更新成功`, 'update-status');
+      } else {
+        setInstallStatus('warning', `(${done}/${ids.length}) ${id} 更新失败：${(r && r.error) || '未知错误'}`, 'update-status');
+      }
     }
-    hideLoading();
+    setInstallStatus(success === ids.length ? 'success' : (success ? 'warning' : 'failed'),
+      `更新完成：${success}/${ids.length} 成功`, 'update-status');
     toast(`更新完成：${success}/${ids.length} 成功`, success === ids.length ? 'success' : (success ? 'warning' : 'error'));
     loadUpdates();
   }
@@ -779,8 +793,8 @@
               <button class="btn btn-primary" id="btn-apply-update">更新选中</button>
             </div>
           </div>
-          <div id="update-progress" style="margin-bottom:10px;color:var(--info);font-size:12px"></div>
-          <div id="update-body"></div>
+          <div id="update-status" class="install-status"></div>
+          <div id="update-body" style="margin-top:12px"></div>
         </div>
 
         <div class="view" id="view-backup">
