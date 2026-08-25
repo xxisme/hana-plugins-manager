@@ -1,7 +1,7 @@
 {
   "name": "hana-plugins-manager",
   "version": "0.2.0",
-  "description": "小花插件管理：管理本机 hanaagent 的插件",
+  "description": "小花插件管理：管理本机 Hana 的插件",
   "type": "module",
   "main": "index.js",
   "private": true,

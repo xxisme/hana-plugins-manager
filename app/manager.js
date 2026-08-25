@@ -157,13 +157,13 @@
   // ── 顶栏 ─────────────────────────────────
   function renderTopbar() {
     const s = STATE.status;
-    const home = s && s.hanaHome ? s.hanaHome : '未检测到';
-    const server = s && s.server && s.server.ok ? `:${s.server.port}` : '离线';
+    const home = s && s.hanaHome ? s.hanaHome : '未检测到主目录';
+    const server = s && s.server && s.server.ok ? `运行中 · 端口 ${s.server.port}` : '未连接';
     const count = (s && s.pluginCount != null) ? s.pluginCount : STATE.plugins.length;
     const homeEl = $('hud-home');
     if (homeEl) { homeEl.textContent = home; homeEl.title = home; }
     const serverEl = $('hud-server');
-    if (serverEl) serverEl.textContent = '服务 ' + server;
+    if (serverEl) serverEl.textContent = server;
     const countEl = $('hud-count');
     if (countEl) countEl.textContent = count + ' 个插件';
     const pulseServer = $('pulse-server');
@@ -196,7 +196,7 @@
 
   // ── 插件管理页 ───────────────────────────
   function trustTag(trust) {
-    if (!trust) return '<span class="tag">trust?</span>';
+    if (!trust) return '<span class="tag">权限未知</span>';
     const cls = trust === 'full-access' ? 'trust-high' : 'trust-low';
     const label = trust === 'full-access' ? '完全访问' : '受限';
     return `<span class="tag ${cls}">${esc(label)}</span>`;
@@ -204,14 +204,14 @@
   function renderManage() {
     const wrap = $('plugin-list');
     if (!STATE.plugins.length) {
-      wrap.innerHTML = `<div class="empty"><h3>暂无插件</h3><p>去「安装」页添加插件，或确认 HANA_HOME 路径正确</p></div>`;
+      wrap.innerHTML = `<div class="empty"><h3>暂无插件</h3><p>去「安装」页添加插件，或确认 Hana 主目录路径正确</p></div>`;
       return;
     }
-    const degraded = STATE.mode === 'fs' ? '<span class="tag warn">降级模式（API 不可用）</span>' : '';
+    const degraded = STATE.mode === 'fs' ? '<span class="tag warn">本地模式（服务未连接）</span>' : '';
     wrap.innerHTML = STATE.plugins.map((p, i) => {
       const ghUrl = p.github ? (p.github.url || ('https://github.com/' + p.github.repo)) : '';
       const gh = p.github ? `<a class="tag github-tag" href="${esc(ghUrl)}" target="_blank" rel="noopener" title="已关联 GitHub：${esc(p.github.repo || '')}">${GH_ICON}<span>${esc(p.github.repo || 'GitHub')}</span></a>` : '';
-      const srcHint = p.fromApi === false ? '<span class="tag">fs</span>' : '';
+      const srcHint = p.fromApi === false ? '<span class="tag">本地</span>' : '';
       const invalidTag = p.error && !p.fromApi ? '<span class="tag warn">异常</span>' : '';
       const version = p.version ? `<span class="tag">v${esc(p.version)}</span>` : '';
       return `
@@ -234,7 +234,7 @@
           <button class="btn btn-danger" data-uninstall="${esc(p.id)}">卸载</button>
         </div>
       </div>`;
-    }).join('') + (degraded ? `<div style="margin-top:12px" class="tag warn">${esc(degraded)} 请确保 hana 服务运行中，改动才能即时生效</div>` : '');
+    }).join('') + (degraded ? `<div style="margin-top:12px" class="tag warn">${esc(degraded)}：改动会直接写入文件，重启 Hana 后完全生效</div>` : '');
     syncCounts();
     bindManageActions();
   }
@@ -249,7 +249,7 @@
         if (r && r.ok) {
           patchPlugin(id, { enabled });
           toast(enabled ? '已启用' : '已停用', 'success');
-          if (r.degraded) toast('已降级修改偏好文件，需重启 hana 生效', 'warning');
+          if (r.degraded) toast('已写入本地配置，重启 Hana 后完全生效', 'warning');
         } else {
           toast((r && r.error) || '操作失败', 'error');
           el.checked = !enabled;
@@ -266,7 +266,7 @@
         if (!el.dataset.update) return;
         const id = el.dataset.update;
         const p = STATE.plugins.find((x) => x.id === id);
-        if (!p || !p.github) { toast('该插件未关联 GitHub 地址', 'warning'); return; }
+        if (!p || !p.github) { toast('该插件未关联仓库地址', 'warning'); return; }
         switchView('update');
       };
     });
@@ -281,7 +281,7 @@
         if (r && r.ok) {
           STATE.plugins = STATE.plugins.filter((x) => x.id !== id);
           toast('已卸载', 'success');
-          if (r.degraded) toast('已降级删除，需重启 hana 生效', 'warning');
+          if (r.degraded) toast('已直接删除，重启 Hana 后完全生效', 'warning');
           renderManage();
         } else toast((r && r.error) || '卸载失败', 'error');
       };
@@ -294,6 +294,7 @@
     if (!r || !r.ok) { toast((r && r.error) || '加载详情失败', 'error'); return; }
     const m = r.manifest || {};
     const gh = r.github || null;
+    const trustLabel = { 'full-access': '完全访问', 'restricted': '受限' }[m.trust] || '未知';
     const html = `
       <div class="drawer-head">
         <h3>${esc(m.name || id)}</h3>
@@ -302,7 +303,7 @@
       <div class="drawer-body">
         <div class="info-row"><span class="k">ID</span><span class="v">${esc(id)}</span></div>
         <div class="info-row"><span class="k">版本</span><span class="v">${esc(m.version || '—')}</span></div>
-        <div class="info-row"><span class="k">信任</span><span class="v">${esc(m.trust || 'restricted')}</span></div>
+        <div class="info-row"><span class="k">信任</span><span class="v">${esc(trustLabel)}</span></div>
         <div class="info-row"><span class="k">描述</span><span class="v">${esc(m.description || '—')}</span></div>
         <div class="info-row"><span class="k">作者</span><span class="v">${esc(m.author || '—')}</span></div>
         <div class="info-row"><span class="k">要求版本</span><span class="v">${esc(m.minAppVersion ? 'v' + m.minAppVersion : '—')}</span></div>
@@ -451,17 +452,18 @@
   }
 
   // 内联状态更新区（不虚化背景；安装/更新共用）
+  // 图标全部使用纯文本符号，避免彩色 emoji 破坏整体低饱和色调
   const STAGE_META = {
     idle: { icon: '○', cls: '' },
     parsing: { icon: '⟳', cls: 'busy', text: '解析仓库…' },
-    downloading: { icon: '⬇', cls: 'busy', text: '下载源码…' },
+    downloading: { icon: '↓', cls: 'busy', text: '下载源码…' },
     analyzing: { icon: '⟳', cls: 'busy', text: '风险检测中…' },
     checking: { icon: '⟳', cls: 'busy', text: '检测更新中…' },
     ready: { icon: '✓', cls: 'ok', text: '检测通过，等待确认安装' },
     installing: { icon: '⟳', cls: 'busy', text: '安装中…' },
     success: { icon: '✔', cls: 'ok', text: '完成' },
     failed: { icon: '✖', cls: 'err', text: '失败' },
-    warning: { icon: '⚠', cls: 'warn', text: '警告' },
+    warning: { icon: '△', cls: 'warn', text: '警告' },
   };
   function setInstallStatus(stage, msg, containerId) {
     const el = $(containerId || 'install-status');
@@ -534,6 +536,13 @@
     const close = () => { back.classList.remove('show'); setTimeout(() => back.remove(), 200); };
     back.addEventListener('click', (e) => { if (e.target === back || e.target.dataset.act === 'close') close(); });
 
+    // 单色文件浏览图标（跟随 currentColor，与整体冷色调一致）
+    const BI = {
+      up: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>',
+      folder: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 3.5h4l1.5 2h7.5v7a1 1 0 0 1-1 1H3a1.5 1.5 0 0 1-1.5-1.5v-8.5z"/></svg>',
+      zip: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="4" width="11" height="9" rx="1.5"/><path d="M6 4V2h4v2"/></svg>',
+      file: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 1.5H4A1.5 1.5 0 0 0 2.5 3v10A1.5 1.5 0 0 0 4 14.5h8A1.5 1.5 0 0 0 13.5 13V5.5L9 1.5z"/><path d="M9 1.5V5h4"/></svg>',
+    };
     let cur = '';
     async function loadDir(path) {
       const r = await api('GET', '/api/browse?path=' + encodeURIComponent(path), undefined, { timeoutMs: 10000 });
@@ -541,13 +550,13 @@
       if (!r || !r.ok) { list.innerHTML = '<div class="empty">' + esc((r && r.error) || '读取失败') + '</div>'; return; }
       cur = r.path;
       crumb.textContent = r.path;
-      let html = `<div class="browse-item dir" data-path="${esc(r.parent || r.path)}">⬆ 上一级</div>`;
+      let html = `<div class="browse-item dir" data-path="${esc(r.parent || r.path)}">${BI.up} 上一级</div>`;
       for (const e of r.entries) {
         const isZip = e.isFile && /\.zip$/i.test(e.name);
         const sz = e.isFile && e.size ? fmtSize(e.size) : '';
-        if (e.isDir) html += `<div class="browse-item dir" data-path="${esc(r.path + '\\' + e.name)}">📁 ${esc(e.name)}</div>`;
-        else if (isZip) html += `<div class="browse-item file" data-pick="${esc(r.path + '\\' + e.name)}"><span>🗜️</span> ${esc(e.name)} <span class="sz">${sz}</span></div>`;
-        else if (e.isFile) html += `<div class="browse-item file" data-path="${esc(r.path + '\\' + e.name)}"><span>📄</span> ${esc(e.name)}</div>`;
+        if (e.isDir) html += `<div class="browse-item dir" data-path="${esc(r.path + '\\' + e.name)}">${BI.folder} ${esc(e.name)}</div>`;
+        else if (isZip) html += `<div class="browse-item file" data-pick="${esc(r.path + '\\' + e.name)}">${BI.zip} ${esc(e.name)} <span class="sz">${sz}</span></div>`;
+        else if (e.isFile) html += `<div class="browse-item file" data-path="${esc(r.path + '\\' + e.name)}">${BI.file} ${esc(e.name)}</div>`;
       }
       list.innerHTML = html;
       list.querySelectorAll('.browse-item[data-path]').forEach((el) => {
@@ -581,16 +590,18 @@
     renderUpdates();
     const updatable = STATE.updates.filter((p) => p.hasUpdate).length;
     const failed = STATE.updates.filter((p) => p.status === 'check-failed').length;
+    const badge = $('tab-update');
+    if (badge) badge.textContent = updatable ? String(updatable) : '';
     if (updatable) setInstallStatus('success', `检测完成：${updatable} 个插件可更新${failed ? `，${failed} 个检测失败` : ''}`, 'update-status');
     else if (failed) setInstallStatus('warning', `检测完成：${failed} 个插件检测失败`, 'update-status');
-    else setInstallStatus('success', '检测完成：所有插件均已最新或未关联 GitHub', 'update-status');
+    else setInstallStatus('success', '检测完成：所有插件均已最新或未关联更新源', 'update-status');
   }
 
   function renderUpdates() {
     const outdated = STATE.updates.filter((p) => p.hasUpdate);
     const body = $('update-body');
     $('update-summary').textContent = outdated.length + ' 个插件可更新';
-    if (!STATE.updates.length) { body.innerHTML = '<div class="empty"><h3>暂无已关联 GitHub 的插件</h3><p>在插件详情里关联 GitHub 地址后即可检测更新</p></div>'; return; }
+    if (!STATE.updates.length) { body.innerHTML = '<div class="empty"><h3>暂无已关联 GitHub 的插件</h3><p>在插件详情里关联仓库地址后即可检测更新</p></div>'; return; }
     const rows = STATE.updates.map((p) => {
       const chipCls = { outdated: 'outdated', latest: 'latest', 'no-source': 'no-source', 'check-failed': 'failed' }[p.status] || '';
       const chipLabel = { outdated: '可更新', latest: '已最新', 'no-source': '未关联', 'check-failed': '检测失败' }[p.status] || p.status;
@@ -665,7 +676,7 @@
     document.querySelectorAll('[data-restore-one]').forEach((el) => {
       el.onclick = async () => {
         const dir = el.dataset.restoreOne;
-        const ok = await modal('全量还原', '将用该备份整体替换当前 plugins 目录（当前状态会先自动备份）。继续？', { danger: true, confirmText: '全量还原' });
+        const ok = await modal('全量还原', '将用该备份整体替换当前插件目录（当前状态会先自动备份）。继续？', { danger: true, confirmText: '全量还原' });
         if (!ok) return;
         showLoading('还原中…');
         const r = await api('POST', '/api/restore', { backupDir: dir }, { timeoutMs: 60000 });
@@ -722,13 +733,13 @@
           <div><h1>小花插件管理</h1></div>
         </div>
         <div class="rt">
-          <span class="hud-item"><span class="pulse" id="pulse-server"></span> <b id="hud-server">服务…</b></span>
-          <span class="hud-item"><span class="pulse" id="pulse-api"></span> <b id="hud-count">…</b></span>
+          <span class="hud-item"><span class="pulse" id="pulse-server"></span> <b id="hud-server">连接中…</b></span>
+          <span class="hud-item"><span class="pulse" id="pulse-api"></span> <b id="hud-count">—</b></span>
         </div>
       </div>
       <div class="path-bar glass">
         <div class="path-info">
-          <span class="path-label">HANA_HOME</span>
+          <span class="path-label">Hana 主目录</span>
           <span class="path-value" id="hud-home" title="">…</span>
         </div>
         <div class="tabs">
@@ -742,7 +753,7 @@
       <div class="main">
         <div class="view active" id="view-manage">
           <div class="page-head">
-            <div><h2>已安装插件</h2><p>管理本机 hanaagent 的插件，支持更新、卸载、启停</p></div>
+            <div><h2>已安装插件</h2><p>管理本机 Hana 的插件：安装、更新、卸载、启停与备份还原</p></div>
             <div class="actions">
               <button class="btn btn-secondary" id="btn-refresh">刷新</button>
               <button class="btn btn-primary" data-go-install>安装插件</button>
@@ -801,7 +812,7 @@
           <div class="page-head">
             <div><h2>备份与还原</h2><p id="backup-count">…</p></div>
             <div class="actions">
-              <button class="btn btn-secondary" id="btn-restore-open">打开备份目录</button>
+              <button class="btn btn-secondary" id="btn-restore-open">查看备份位置</button>
               <button class="btn btn-primary" id="btn-backup">全量备份</button>
             </div>
           </div>
@@ -837,7 +848,7 @@
       else toast((r && r.error) || '备份失败', 'error');
     };
     $('btn-restore-open').onclick = () => {
-      toast('请在 hana 插件目录下查看备份（plugin-data/hana-plugins-manager/backups）', 'info');
+      toast('备份保存在 Hana 主目录下：plugin-data/hana-plugins-manager/backups/plugins', 'info');
     };
 
     // 绑定安装向导动作

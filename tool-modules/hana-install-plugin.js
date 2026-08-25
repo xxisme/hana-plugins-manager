@@ -11,7 +11,7 @@ import { checkLocalSource } from '../lib/zip-check.js';
 import { runRiskCheck } from '../lib/risk-check.js';
 
 export const name = 'hana_install_plugin';
-export const description = '安装 hanaagent 插件：输入 GitHub 地址或本地 zip/目录路径，自动下载、风险检测后安装';
+export const description = '安装 Hana 插件：输入 GitHub 地址或本地 zip/目录路径，自动下载、风险检测后安装';
 export const parameters = {
   type: 'object',
   properties: {
@@ -26,7 +26,7 @@ export async function execute(input = {}) {
   const ctx = getContext();
   const dataDir = resolveDataDir();
   const home = ctx.hanaHome || getCurrentDshHome();
-  if (!home) return { ok: false, error: '未检测到 HANA_HOME' };
+  if (!home) return { ok: false, error: '未检测到 Hana 主目录' };
 
   const source = String(input.source || '').trim();
   if (!source) return { ok: false, error: 'source 必填' };

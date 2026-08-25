@@ -8,7 +8,7 @@ import { getSource } from '../lib/sources.js';
 import * as hanaApi from '../lib/hana-api.js';
 
 export const name = 'hana_list_plugins';
-export const description = '列出本机 hanaagent 已安装的插件（含名称/版本/启用状态/GitHub 关联）';
+export const description = '列出本机 Hana 已安装的插件（含名称/版本/启用状态/GitHub 关联）';
 export const parameters = {
   type: 'object',
   properties: {},
@@ -18,7 +18,7 @@ export async function execute() {
   const ctx = getContext();
   const dataDir = resolveDataDir();
   const home = ctx.hanaHome || getCurrentDshHome();
-  if (!home) return { ok: false, error: '未检测到 HANA_HOME' };
+  if (!home) return { ok: false, error: '未检测到 Hana 主目录' };
 
   const apiR = await hanaApi.listPlugins(home);
   const fsPlugins = scanPlugins(home).plugins || [];

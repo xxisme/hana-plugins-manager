@@ -10,7 +10,7 @@ import { backupPlugins } from '../lib/backup.js';
 import { appendLog } from '../lib/operation-log.js';
 
 export const name = 'hana_uninstall_plugin';
-export const description = '卸载指定的 hanaagent 插件';
+export const description = '卸载指定的 Hana 插件';
 export const parameters = {
   type: 'object',
   properties: {
@@ -23,7 +23,7 @@ export async function execute(input = {}) {
   const ctx = getContext();
   const dataDir = resolveDataDir();
   const home = ctx.hanaHome || getCurrentDshHome();
-  if (!home) return { ok: false, error: '未检测到 HANA_HOME' };
+  if (!home) return { ok: false, error: '未检测到 Hana 主目录' };
   const id = String(input.id || '').trim();
   if (!id) return { ok: false, error: 'id 必填' };
 
@@ -41,7 +41,7 @@ export async function execute(input = {}) {
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true, force: true });
       setSource(dataDir, id, '');
-      return { ok: true, pluginId: id, backupDir, degraded: true, warning: '通过文件系统删除，需重启 hana 生效' };
+      return { ok: true, pluginId: id, backupDir, degraded: true, warning: '已直接删除，重启 Hana 后完全生效' };
     }
     return { ok: false, error: r.error || '插件不存在' };
   } catch (e) {

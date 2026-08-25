@@ -9,7 +9,7 @@ import * as hanaApi from '../lib/hana-api.js';
 import { appendLog } from '../lib/operation-log.js';
 
 export const name = 'hana_toggle_plugin';
-export const description = '启用或停用指定的 hanaagent 插件';
+export const description = '启用或停用指定的 Hana 插件';
 export const parameters = {
   type: 'object',
   properties: {
@@ -23,7 +23,7 @@ export async function execute(input = {}) {
   const ctx = getContext();
   const dataDir = resolveDataDir();
   const home = ctx.hanaHome || getCurrentDshHome();
-  if (!home) return { ok: false, error: '未检测到 HANA_HOME' };
+  if (!home) return { ok: false, error: '未检测到 Hana 主目录' };
   const id = String(input.id || '').trim();
   const enabled = !!input.enabled;
   if (!id) return { ok: false, error: 'id 必填' };
@@ -47,7 +47,7 @@ export async function execute(input = {}) {
     prefs.disabled_plugins = disabled;
     fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf-8');
     appendLog(dataDir, { action: enabled ? 'enable' : 'disable', pluginId: id, ok: true, degraded: true });
-    return { ok: true, id, enabled, degraded: true, warning: '直接修改偏好文件，需重启 hana 生效' };
+    return { ok: true, id, enabled, degraded: true, warning: '已写入本地配置，重启 Hana 后完全生效' };
   } catch (e) {
     return { ok: false, error: e.message };
   }

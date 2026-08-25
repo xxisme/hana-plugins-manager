@@ -61,7 +61,7 @@ export default class HanaPluginsManager {
     if (this._hanaHome) {
       this._log.info(`[hana-plugins-manager] HANA_HOME = ${this._hanaHome}`);
     } else {
-      this._log.warn('[hana-plugins-manager] 未检测到 HANA_HOME（~/.hanako 不存在）');
+      this._log.warn('[hana-plugins-manager] 未检测到 Hana 主目录（~/.hanako 不存在）');
     }
 
     if (dataDir) {

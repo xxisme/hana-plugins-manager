@@ -3,7 +3,7 @@
  *
  * 端点：
  *   GET  /manager, /page            iframe shell HTML（CSS/JS 内联 + 注入 token）
- *   GET  /api/status                 HANA_HOME / 服务状态 / 插件总数
+ *   GET  /api/status                 Hana 主目录 / 服务状态 / 插件总数
  *   GET  /api/homes                  候选 home + 当前选择
  *   POST /api/current-home           切换当前 home
  *   GET  /api/plugins                插件列表（API 优先，降级 fs）
@@ -76,7 +76,7 @@ export default function (app, ctx) {
     }
     const home = currentHome();
     const homeExists = home ? fs.existsSync(home) : false;
-    const info = home ? readServerInfo(home) : { ok: false, error: '未配置 HANA_HOME' };
+    const info = home ? readServerInfo(home) : { ok: false, error: '未配置 Hana 主目录' };
     const pluginsPath = pluginsDirPath();
     let pluginCount = 0;
     if (pluginsPath && fs.existsSync(pluginsPath)) {
@@ -171,7 +171,7 @@ export default function (app, ctx) {
   // ── 插件列表 ───────────────────────────
   app.get('/api/plugins', async (c) => {
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
 
     const sources = readSources(dataDir);
     const fsPlugins = scanPlugins(home).plugins || [];
@@ -236,7 +236,7 @@ export default function (app, ctx) {
   // ── 插件详情 ───────────────────────────
   app.get('/api/plugins/:id', (c) => {
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     const id = hanaApi.safePathSegment(c.req.param('id'));
     if (!id) return c.json({ ok: false, error: '非法插件 id' }, 400);
     const dir = path.join(pluginsDirPath(), id);
@@ -316,7 +316,7 @@ export default function (app, ctx) {
     const { url } = await c.req.json();
     if (!url) return c.json({ ok: false, error: 'url 必填' }, 400);
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     try {
       const info = await gh.getRepoInfo(url, dataDir);
       if (!info.ok) return c.json({ ok: false, error: info.error }, 400);
@@ -358,7 +358,7 @@ export default function (app, ctx) {
   app.post('/api/install/confirm', async (c) => {
     const { sourcePath, allowDowngrade = false } = await c.req.json();
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!sourcePath || !fs.existsSync(sourcePath)) {
       return c.json({ ok: false, error: `路径不存在: ${sourcePath}` }, 400);
     }
@@ -380,7 +380,7 @@ export default function (app, ctx) {
   app.post('/api/install/local', async (c) => {
     const { sourcePath } = await c.req.json();
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!sourcePath || !fs.existsSync(sourcePath)) {
       return c.json({ ok: false, error: '路径不存在' }, 400);
     }
@@ -411,7 +411,7 @@ export default function (app, ctx) {
   app.post('/api/uninstall', async (c) => {
     const { id } = await c.req.json();
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!id) return c.json({ ok: false, error: 'id 必填' }, 400);
     const safeId = hanaApi.safePathSegment(id);
     if (!safeId) return c.json({ ok: false, error: '非法插件 id' }, 400);
@@ -433,7 +433,7 @@ export default function (app, ctx) {
         fs.rmSync(dir, { recursive: true, force: true });
         setSource(dataDir, safeId, '');
         appendLog(dataDir, { action: 'uninstall.fallback', pluginId: safeId, ok: true, backupDir, degraded: true });
-        return c.json({ ok: true, backupDir, degraded: true, warning: '通过文件系统删除，hana 需重启生效' });
+        return c.json({ ok: true, backupDir, degraded: true, warning: '已直接删除，重启 Hana 后完全生效' });
       }
       return c.json({ ok: false, error: r.error || '插件不存在' }, 404);
     } catch (e) {
@@ -445,7 +445,7 @@ export default function (app, ctx) {
   app.post('/api/toggle', async (c) => {
     const { id, enabled } = await c.req.json();
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!id) return c.json({ ok: false, error: 'id 必填' }, 400);
     if (typeof enabled !== 'boolean') return c.json({ ok: false, error: 'enabled 必须是 boolean' }, 400);
     try {
@@ -470,7 +470,7 @@ export default function (app, ctx) {
       prefs.disabled_plugins = disabled;
       fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf-8');
       appendLog(dataDir, { action: enabled ? 'enable' : 'disable', pluginId: id, ok: true, degraded: true });
-      return c.json({ ok: true, id, enabled, degraded: true, warning: '直接修改偏好文件，hana 需重启生效' });
+      return c.json({ ok: true, id, enabled, degraded: true, warning: '已写入本地配置，重启 Hana 后完全生效' });
     } catch (e) {
       return c.json({ ok: false, error: e.message }, 500);
     }
@@ -479,7 +479,7 @@ export default function (app, ctx) {
   // ── 更新检测 ───────────────────────────
   app.get('/api/updates/check', async (c) => {
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     const force = c.req.query('force') === '1' || c.req.query('force') === 'true';
     const cacheKey = home;
     if (!force) {
@@ -504,7 +504,7 @@ export default function (app, ctx) {
   app.post('/api/updates/apply', async (c) => {
     const { id, allowDowngrade = false } = await c.req.json();
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!id) return c.json({ ok: false, error: 'id 必填' }, 400);
     try {
       const prep = await prepareUpdate(id, dataDir);
@@ -535,7 +535,7 @@ export default function (app, ctx) {
 
   app.post('/api/backup', (c) => {
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     try {
       const dir = backupPlugins(dataDir, home);
       const removed = cleanupOldBackups(dataDir, 10);
@@ -567,7 +567,7 @@ export default function (app, ctx) {
   app.post('/api/restore', async (c) => {
     const { backupDir } = await c.req.json();
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!backupDir) return c.json({ ok: false, error: 'backupDir 缺失' }, 400);
     try {
       const r = restorePlugins(dataDir, backupDir, home);
@@ -583,7 +583,7 @@ export default function (app, ctx) {
   app.post('/api/restore/plugin', async (c) => {
     const { backupDir, id } = await c.req.json();
     const home = currentHome();
-    if (!home) return c.json({ ok: false, error: 'HANA_HOME 未配置' }, 400);
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!backupDir || !id) return c.json({ ok: false, error: 'backupDir/id 缺失' }, 400);
     try {
       const r = restorePlugin(dataDir, backupDir, home, id);

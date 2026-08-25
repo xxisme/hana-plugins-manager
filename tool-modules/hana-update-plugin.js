@@ -10,7 +10,7 @@ import { scanPlugins } from '../lib/scanner.js';
 import { appendLog } from '../lib/operation-log.js';
 
 export const name = 'hana_update_plugin';
-export const description = '检查 hanaagent 插件是否有更新，并可执行更新到最新版本';
+export const description = '检查 Hana 插件是否有更新，并可执行更新到最新版本';
 export const parameters = {
   type: 'object',
   properties: {
@@ -23,7 +23,7 @@ export async function execute(input = {}) {
   const ctx = getContext();
   const dataDir = resolveDataDir();
   const home = ctx.hanaHome || getCurrentDshHome();
-  if (!home) return { ok: false, error: '未检测到 HANA_HOME' };
+  if (!home) return { ok: false, error: '未检测到 Hana 主目录' };
 
   const id = String(input.id || '').trim();
   try {
