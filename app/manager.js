@@ -32,6 +32,8 @@
     backups: [],
     logs: [],
     browse: null,
+    discover: null,    // 可安装插件清单 { loaded, plugins }
+    discoverSel: null, // 当前选中的清单卡片 repo
   };
 
   // ── helpers ────────────────────────────────
@@ -296,6 +298,8 @@
       STATE.pendingInstall = null;
       renderRisk();
       setInstallStatus('idle');
+      // 可安装插件清单（后端 10min 缓存,不会重复拉取）
+      loadDiscover();
     } else if (name === 'update') {
       loadUpdates();
     } else if (name === 'backup') {
@@ -606,6 +610,66 @@
     const ghInfo = $('gh-repo-info'); if (ghInfo) ghInfo.innerHTML = '';
     const cand = $('cand-area'); if (cand) { cand.style.display = 'none'; cand.innerHTML = ''; }
     renderRisk();
+  }
+
+  // ── 可安装插件清单 ───────────────────────
+  /** 加载可安装插件清单（后端拉取 + 10min 缓存 + 已装排除） */
+  async function loadDiscover(force) {
+    if (!force && STATE.discover && STATE.discover.loaded) return;
+    const list = $('discover-list');
+    if (list) list.innerHTML = '<div class="empty">加载可安装插件清单…</div>';
+    const r = await api('GET', '/api/install/discover', undefined, { timeoutMs: 25000 });
+    if (!r || !r.ok) {
+      if (list) list.innerHTML = `<div class="empty">${esc((r && r.error) || '加载失败')} <button class="btn btn-ghost btn-sm" id="discover-retry">重试</button></div>`;
+      const rt = $('discover-retry');
+      if (rt) rt.onclick = () => loadDiscover(true);
+      return;
+    }
+    STATE.discover = { loaded: true, plugins: r.plugins || [] };
+    renderDiscover();
+  }
+
+  /** 渲染可安装插件卡片（点击卡片把地址填入上方安装地址栏） */
+  function renderDiscover() {
+    const list = $('discover-list');
+    if (!list) return;
+    const plugins = (STATE.discover && STATE.discover.plugins) || [];
+    if (!plugins.length) {
+      list.innerHTML = '<div class="empty">本机已安装清单中的全部插件（或清单为空）</div>';
+      return;
+    }
+    list.innerHTML = '<div class="discover-grid">' + plugins.map((p, i) => {
+      const selected = STATE.discoverSel === p.repo;
+      return `
+      <div class="discover-card${selected ? ' selected' : ''}" data-repo="${esc(p.repo)}" style="animation:cardIn 300ms ${Math.min(i * 20, 400)}ms backwards">
+        <div class="discover-name">${esc(p.repoName || p.repo)} <span class="discover-owner">${esc(p.owner)}</span></div>
+        <div class="discover-desc">${esc(p.description || '（无描述）')}</div>
+        <div class="discover-foot">
+          <span class="discover-repo">${esc(p.repo)}</span>
+          <a class="upd-gh" href="${esc(p.github)}" target="_blank" rel="noopener">打开仓库</a>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+    // 卡片内仓库链接点击不触发行选中
+    list.querySelectorAll('.discover-card a').forEach((a) => a.addEventListener('click', (e) => e.stopPropagation()));
+    // 点击卡片：填入 GitHub 地址栏并切到 GitHub 子面板
+    list.querySelectorAll('.discover-card').forEach((card) => {
+      card.onclick = () => {
+        const p = plugins.find((x) => x.repo === card.dataset.repo);
+        if (!p) return;
+        STATE.discoverSel = p.repo;
+        // 填入原始地址（保留 /tree/ 子路径，合集仓库子插件可辨）
+        const urlInput = $('gh-url');
+        if (urlInput) urlInput.value = p.github;
+        document.querySelectorAll('.sub-tab').forEach((x) => x.classList.toggle('active', x.dataset.panel === 'gh'));
+        const ghPanel = $('gh-panel'); if (ghPanel) ghPanel.style.display = '';
+        const localPanel = $('local-panel'); if (localPanel) localPanel.style.display = 'none';
+        STATE.risk = null; STATE.pendingInstall = null;
+        resetInstallPanel();
+        renderDiscover();
+        toast('已填入地址，点「解析并下载」继续', 'success');
+      };
+    });
   }
 
   function renderRisk() {
@@ -1064,6 +1128,15 @@
           <div id="cand-area" style="display:none"></div>
           <div id="risk-area"></div>
           <div id="install-status" class="install-status"></div>
+          <div class="discover-wrap">
+            <div class="discover-head">
+              <h3>可安装插件（点击插件卡片可进行解析下载安装）</h3>
+              <span class="discover-src">来自 github.com/xxisme/hana-plugins-manager 插件清单</span>
+              <button class="btn btn-ghost btn-sm" id="discover-refresh">刷新</button>
+            </div>
+            <div class="discover-warn">⚠ 以下插件均搜集自 GitHub，未经检测与测试，请自行评估安全性后安装。</div>
+            <div id="discover-list"></div>
+          </div>
         </div>
 
         <div class="view" id="view-update">
@@ -1149,6 +1222,10 @@
     // 绑定安装向导动作
     bindGithubActions();
     bindLocalActions();
+
+    // 可安装插件清单：刷新按钮（force 重新拉取）
+    const drBtn = $('discover-refresh');
+    if (drBtn) drBtn.onclick = () => loadDiscover(true);
 
     // 顶栏「打开插件目录」按钮
     const btnOpenHome = $('btn-open-home');

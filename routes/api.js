@@ -37,7 +37,7 @@ import {
   listCandidates, getCurrentDshHome, setCurrentDshHome,
 } from '../lib/homes.js';
 import { scanPlugins, readManifest, pluginsDir } from '../lib/scanner.js';
-import { readSources, getSource, setSource, detectSourceFromManifest } from '../lib/sources.js';
+import { readSources, getSource, setSource, detectSourceFromManifest, parseGithubUrl } from '../lib/sources.js';
 import * as hanaApi from '../lib/hana-api.js';
 import * as gh from '../lib/github.js';
 import { checkLocalSource } from '../lib/zip-check.js';
@@ -310,6 +310,116 @@ export default function (app, ctx) {
     appendLog(dataDir, { action: 'source.remove', pluginId: id, ok: true });
     return c.json({ ok: true });
   });
+
+  // ── 可安装插件发现 ──────────────────────
+  // 固定清单地址（xxisme/hana-plugins-manager 仓库的 hanaagent-plugins.json）。
+  // 注意：github blob 页 URL 需转成 raw 才能读 JSON；raw 域名不受 api.github.com 限流影响。
+  const DISCOVER_URL = 'https://raw.githubusercontent.com/xxisme/hana-plugins-manager/master/hanaagent-plugins.json';
+  const DISCOVER_TTL = 10 * 60 * 1000; // 10 分钟缓存
+  let discoverCache = { at: 0, data: null };
+
+  /** 收集本机已安装插件的 GitHub 仓库集合（owner/repo 小写），用于清单排除 */
+  function collectInstalledRepos(home, dataDir) {
+    const set = new Set();
+    const plugins = scanPlugins(home).plugins || [];
+    const sources = readSources(dataDir);
+    for (const p of plugins) {
+      const src = sources[p.id] || detectSourceFromManifest(readManifest(p.dir));
+      if (src && src.repo) set.add(String(src.repo).toLowerCase());
+      else if (src && src.githubUrl) {
+        const parsed = parseGithubUrl(src.githubUrl);
+        if (parsed) set.add(parsed.repo.toLowerCase());
+      }
+    }
+    return set;
+  }
+
+  app.get('/api/install/discover', async (c) => {
+    const home = currentHome();
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
+    try {
+      if (discoverCache.data && Date.now() - discoverCache.at < DISCOVER_TTL) {
+        return c.json({ ok: true, ...discoverCache.data, _cache: true });
+      }
+
+      // 双通道拉取清单：优先 raw（不受 api.github.com 限流）；失败 fallback Contents API（支持 Token）
+      const raw = await fetchDiscoverText(DISCOVER_URL, null, dataDir);
+      let text = null;
+      let fetchNote = 'raw';
+      if (raw.ok) {
+        text = raw.text;
+      } else {
+        const apiUrl = 'https://api.github.com/repos/xxisme/hana-plugins-manager/contents/hanaagent-plugins.json?ref=master';
+        const via = await fetchDiscoverText(apiUrl, gh.readGithubToken(dataDir), dataDir);
+        if (via.ok) {
+          text = via.text;
+          fetchNote = 'api';
+        } else {
+          return c.json({
+            ok: false,
+            error: `插件清单拉取失败: ${via.error}${String(via.error).includes('403') ? '（GitHub API 限流，请配置 Token 或稍后再试）' : ''}`,
+          }, 502);
+        }
+      }
+
+      let j = null;
+      try { j = JSON.parse(text); } catch { /* 下面统一报格式错 */ }
+      const projects = j && Array.isArray(j.projects) ? j.projects : [];
+      if (!projects.length) return c.json({ ok: false, error: '插件清单为空或格式不符' }, 502);
+
+      const installed = collectInstalledRepos(home, dataDir);
+      const plugins = [];
+      for (const it of projects) {
+        const gh0 = String(it.github || '').trim();
+        if (!gh0) continue;
+        const parsed = parseGithubUrl(gh0);
+        if (!parsed) continue;
+        // 排除本机已装（无论是否最新）：按 owner/repo 归一比对，合集仓库子插件也能命中
+        if (installed.has(parsed.repo.toLowerCase())) continue;
+        plugins.push({
+          github: gh0,   // 保留原始地址（可能含 /tree/... 子路径，合集子插件可辨）
+          repo: parsed.repo,
+          owner: parsed.owner,
+          repoName: parsed.repoName,
+          description: String(it.description || '').trim(),
+        });
+      }
+      discoverCache = { at: Date.now(), data: { plugins, lastUpdated: j.lastUpdated || null } };
+      return c.json({ ok: true, plugins, lastUpdated: j.lastUpdated || null, fetchedAt: new Date().toISOString(), via: fetchNote });
+    } catch (e) {
+      return c.json({ ok: false, error: e.message || '插件清单拉取失败' }, 502);
+    }
+  });
+
+  /**
+   * 拉取远程文本：raw 直取；Contents API 时 base64 解码。
+   * @param {string} url 目标 URL
+   * @param {string|null} token 可选的 GitHub Token（Contents API 鉴权/提配额）
+   * @returns {Promise<{ok:boolean, text?:string, error?:string}>}
+   */
+  async function fetchDiscoverText(url, token, dataDir) {
+    const headers = { 'user-agent': 'hana-plugins-manager' };
+    if (url.includes('api.github.com')) {
+      headers.accept = 'application/vnd.github+json';
+      if (token) headers.authorization = `Bearer ${token}`;
+    }
+    try {
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      const text = await res.text();
+      // Contents API 返回 JSON 包装（base64 content），raw 返回裸 JSON
+      if (url.includes('api.github.com')) {
+        try {
+          const j = JSON.parse(text);
+          if (j && j.content) return { ok: true, text: Buffer.from(j.content, 'base64').toString('utf-8') };
+          return { ok: false, error: 'Contents API 返回格式不符' };
+        } catch { return { ok: false, error: 'Contents API 响应解析失败' }; }
+      }
+      return { ok: true, text };
+    } catch (e) {
+      return { ok: false, error: e.message || e.name };
+    }
+  }
 
   // ── 安装：GitHub 分析 ──────────────────
   app.post('/api/install/github-analyze', async (c) => {
