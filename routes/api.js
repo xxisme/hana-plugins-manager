@@ -334,6 +334,24 @@ export default function (app, ctx) {
         return c.json({ ok: false, error: '结构校验失败: ' + check.errors.join('；'), errors: check.errors }, 400);
       }
       const hanaVersion = readServerInfo(home).version || null;
+
+      // 插件合集仓库：识别全部候选，返回给前端选择安装哪一项
+      if (check.multiple && Array.isArray(check.candidates)) {
+        const candidates = check.candidates.map((c) => {
+          const r = runRiskCheck(c, hanaVersion);
+          return {
+            pluginRoot: c.pluginRoot,
+            pluginId: (c.manifest && c.manifest.id) || path.basename(c.pluginRoot),
+            pluginName: (c.manifest && (c.manifest.name || c.manifest.id)) || path.basename(c.pluginRoot),
+            version: (c.manifest && c.manifest.version) || null,
+            trust: (c.manifest && c.manifest.trust) || 'restricted',
+            risk: r,
+          };
+        });
+        appendLog(dataDir, { action: 'install.github.multi', url, ok: true, repo: info.repo, count: candidates.length });
+        return c.json({ ok: true, multiple: true, repo: info.repo, candidates });
+      }
+
       const risk = runRiskCheck(check, hanaVersion);
       appendLog(dataDir, { action: 'install.github.apply', url, ok: true, repo: info.repo, riskLevel: risk.level });
 
@@ -390,6 +408,24 @@ export default function (app, ctx) {
         return c.json({ ok: false, error: '结构校验失败: ' + check.errors.join('；'), errors: check.errors }, 400);
       }
       const hanaVersion = readServerInfo(home).version || null;
+
+      // 插件合集 zip/目录：识别全部候选，返回给前端选择安装哪一项
+      if (check.multiple && Array.isArray(check.candidates)) {
+        const candidates = check.candidates.map((c) => {
+          const r = runRiskCheck(c, hanaVersion);
+          return {
+            pluginRoot: c.pluginRoot,
+            pluginId: (c.manifest && c.manifest.id) || path.basename(c.pluginRoot),
+            pluginName: (c.manifest && (c.manifest.name || c.manifest.id)) || path.basename(c.pluginRoot),
+            version: (c.manifest && c.manifest.version) || null,
+            trust: (c.manifest && c.manifest.trust) || 'restricted',
+            risk: r,
+          };
+        });
+        appendLog(dataDir, { action: 'install.local.multi', sourcePath, ok: true, count: candidates.length });
+        return c.json({ ok: true, multiple: true, candidates });
+      }
+
       const risk = runRiskCheck(check, hanaVersion);
       appendLog(dataDir, { action: 'install.local', sourcePath, ok: true, riskLevel: risk.level });
       return c.json({

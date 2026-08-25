@@ -17,6 +17,8 @@
 
   // GitHub 图标（内联 SVG，用于绿色关联标签）
   const GH_ICON = '<svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
+  // 勾选图标（更新表格选择）
+  const CHECK_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 8.6l3.1 3L13 5.4"/></svg>';
 
   const STATE = {
     status: null,
@@ -375,7 +377,7 @@
         $('local-panel').style.display = panel === 'local' ? '' : 'none';
         STATE.risk = null;
         STATE.pendingInstall = null;
-        renderRisk();
+        resetInstallPanel();
         setInstallStatus('idle');
       };
     });
@@ -398,7 +400,6 @@
         ${r.description ? `<div class="info-row"><span class="k">描述</span><span class="v">${esc(r.description)}</span></div>` : ''}
         ${r.remoteManifestError ? `<div class="tag warn" style="margin-top:8px">远端 manifest：${esc(r.remoteManifestError)}</div>` : ''}`;
       STATE.pendingInstall = { type: 'github', url };
-      $('gh-proceed').style.display = '';
       setInstallStatus('downloading');
       const rr = await api('POST', '/api/install/github-apply', { url }, { timeoutMs: 90000 });
       if (!rr || !rr.ok) {
@@ -406,8 +407,16 @@
         toast((rr && rr.error) || '下载/检测失败', 'error');
         return;
       }
+      // 插件合集仓库：列出候选，等待用户选择后继续
+      if (rr.multiple && Array.isArray(rr.candidates)) {
+        STATE.pendingInstall = { type: 'github', url };
+        renderCandidates(rr.candidates, 'github');
+        setInstallStatus('warning', `检测到 ${rr.candidates.length} 个插件，请选择要安装的一项`);
+        return;
+      }
       STATE.pendingInstall = { type: 'github', stagingPath: rr.pluginRoot, sourcePath: rr.stagedZip, url };
       STATE.risk = rr.risk;
+      $('gh-proceed').style.display = '';
       renderRisk();
       setInstallStatus('ready', `检测通过（${rr.risk.level === 'high' ? '高风险，请谨慎' : '低/中风险'}）`);
     };
@@ -426,6 +435,13 @@
         toast((r && r.error) || '校验失败', 'error');
         return;
       }
+      // 插件合集 zip/目录：列出候选，等待用户选择后继续
+      if (r.multiple && Array.isArray(r.candidates)) {
+        STATE.pendingInstall = { type: 'local' };
+        renderCandidates(r.candidates, 'local');
+        setInstallStatus('warning', `检测到 ${r.candidates.length} 个插件，请选择要安装的一项`);
+        return;
+      }
       STATE.pendingInstall = { type: 'local', sourcePath: path };
       STATE.risk = r.risk;
       $('local-proceed').style.display = '';
@@ -433,6 +449,52 @@
       setInstallStatus('ready', `检测通过（${r.risk.level === 'high' ? '高风险，请谨慎' : '低/中风险'}）`);
     };
     $('local-proceed').onclick = () => confirmInstall();
+  }
+
+  /** 插件合集候选选择（github/local 通用） */
+  function renderCandidates(candidates, type) {
+    const wrap = $('cand-area');
+    if (!wrap || !Array.isArray(candidates) || !candidates.length) return;
+    const items = candidates.map((c, i) => {
+      const trustLabel = c.trust === 'full-access' ? '完全访问' : '受限';
+      const riskLabel = { high: '高风险', medium: '中风险', low: '低风险' }[c.risk && c.risk.level] || '未知';
+      return `
+      <div class="cand-item" data-i="${i}">
+        <div class="cand-name">${esc(c.pluginName || c.pluginId || '未命名')}
+          ${c.version ? `<span class="tag">v${esc(c.version)}</span>` : ''}
+          <span class="tag ${c.trust === 'full-access' ? 'trust-high' : 'trust-low'}">${esc(trustLabel)}</span>
+        </div>
+        <div class="cand-meta">${esc(c.pluginId || '')} · 风险：${esc(riskLabel)}</div>
+      </div>`;
+    }).join('');
+    wrap.innerHTML = `<div class="cand-hint">该来源包含 ${candidates.length} 个插件，请选择要安装的一项：</div><div class="cand-list">${items}</div>`;
+    wrap.style.display = '';
+    wrap.querySelectorAll('.cand-item').forEach((el) => {
+      el.onclick = () => {
+        wrap.querySelectorAll('.cand-item').forEach((x) => x.classList.remove('selected'));
+        el.classList.add('selected');
+        const c = candidates[+el.dataset.i];
+        STATE.pendingInstall = {
+          type,
+          sourcePath: c.pluginRoot,
+          url: type === 'github' ? (STATE.pendingInstall && STATE.pendingInstall.url) : undefined,
+        };
+        STATE.risk = c.risk || null;
+        renderRisk();
+        const proceed = type === 'github' ? $('gh-proceed') : $('local-proceed');
+        if (proceed) proceed.style.display = '';
+        setInstallStatus('ready', `已选择「${c.pluginName || c.pluginId}」，可继续安装`);
+      };
+    });
+  }
+
+  /** 重置安装面板（成功/切换来源时清理候选与状态区） */
+  function resetInstallPanel() {
+    const ghProceed = $('gh-proceed'); if (ghProceed) ghProceed.style.display = 'none';
+    const localProceed = $('local-proceed'); if (localProceed) localProceed.style.display = 'none';
+    const ghInfo = $('gh-repo-info'); if (ghInfo) ghInfo.innerHTML = '';
+    const cand = $('cand-area'); if (cand) { cand.style.display = 'none'; cand.innerHTML = ''; }
+    renderRisk();
   }
 
   function renderRisk() {
@@ -493,7 +555,7 @@
           await api('POST', '/api/plugins/' + encodeURIComponent(r.installed.id) + '/source', { githubUrl: p.url });
         }
         STATE.risk = null; STATE.pendingInstall = null;
-        $('gh-repo-info').innerHTML = ''; $('gh-proceed').style.display = 'none'; renderRisk();
+        resetInstallPanel();
       } else {
         setInstallStatus('failed', (r && r.error) || '安装失败');
         toast((r && r.error) || '安装失败', 'error');
@@ -508,7 +570,8 @@
       if (r && r.ok) {
         setInstallStatus('success');
         toast('安装成功', 'success');
-        STATE.risk = null; STATE.pendingInstall = null; renderRisk();
+        STATE.risk = null; STATE.pendingInstall = null;
+        resetInstallPanel();
       } else {
         setInstallStatus('failed', (r && r.error) || '安装失败');
         toast((r && r.error) || '安装失败', 'error');
@@ -597,24 +660,49 @@
     else setInstallStatus('success', '检测完成：所有插件均已最新或未关联更新源', 'update-status');
   }
 
+  /** 更新页：已选/可更新计数 + 「更新选中」按钮可用态 */
+  function updateSelectSummary() {
+    const total = STATE.updates.filter((p) => p.hasUpdate).length;
+    const sel = STATE.updateSel.size;
+    $('update-summary').textContent = `${sel} / ${total} 已选`;
+    const btn = $('btn-apply-update');
+    if (btn) btn.disabled = sel === 0;
+  }
+
   function renderUpdates() {
-    const outdated = STATE.updates.filter((p) => p.hasUpdate);
     const body = $('update-body');
-    $('update-summary').textContent = outdated.length + ' 个插件可更新';
+    updateSelectSummary();
     if (!STATE.updates.length) { body.innerHTML = '<div class="empty"><h3>暂无已关联 GitHub 的插件</h3><p>在插件详情里关联仓库地址后即可检测更新</p></div>'; return; }
+    const STATUS_META = {
+      'outdated':      { chipCls: 'outdated',      label: '可更新' },
+      'latest':        { chipCls: 'latest',        label: '已最新' },
+      'no-source':     { chipCls: 'no-source',     label: '未关联' },
+      'check-failed':  { chipCls: 'failed',        label: '检测失败' },
+      'upstream-404':  { chipCls: 'upstream-404',  label: '仓库 404' },
+      'no-version':    { chipCls: 'no-version',    label: '无 version' },
+    };
     const rows = STATE.updates.map((p) => {
-      const chipCls = { outdated: 'outdated', latest: 'latest', 'no-source': 'no-source', 'check-failed': 'failed' }[p.status] || '';
-      const chipLabel = { outdated: '可更新', latest: '已最新', 'no-source': '未关联', 'check-failed': '检测失败' }[p.status] || p.status;
+      const meta = STATUS_META[p.status] || { chipCls: '', label: p.status };
+      const errStatus = p.status === 'check-failed' || p.status === 'upstream-404' || p.status === 'no-version';
+      const ghLink = p.github && p.github.url
+        ? `<a class="upd-gh" href="${esc(p.github.url)}" target="_blank" rel="noopener" data-gh>打开仓库</a>`
+        : '';
       const versionCell = p.hasUpdate
         ? `<span class="version-compare">${esc(p.localVersion || '?')} <span class="arrow">→</span> ${esc(p.remoteVersion || '?')}</span>`
-        : (p.status === 'check-failed' ? `<span class="version-compare">${esc(p.upstreamError || p.error || '')}</span>` : '');
-      const checked = p.hasUpdate && STATE.updateSel.has(p.id);
+        : (errStatus
+          ? `<span class="upd-err">${esc(p.upstreamError || p.error || '检测失败')} ${ghLink}</span>`
+          : '<span class="version-compare">—</span>');
+      const hasSource = p.status !== 'no-source';
+      const selected = STATE.updateSel.has(p.id);
+      const cb = hasSource
+        ? `<span class="cb${selected ? ' on' : ''}" data-uid="${esc(p.id)}" title="点击选择/重试">${selected ? CHECK_ICON : ''}</span>`
+        : '';
       return `
-      <tr>
-        <td>${p.hasUpdate ? `<input type="checkbox" data-uid="${esc(p.id)}" ${checked ? 'checked' : ''}>` : ''}</td>
+      <tr data-uid="${esc(p.id)}" class="upd-row${hasSource ? ' selectable' : ''}${selected ? ' selected' : ''}">
+        <td>${cb}</td>
         <td>${esc(p.name || p.id)}</td>
-        <td>${versionCell || '<span class="version-compare">—</span>'}</td>
-        <td><span class="status-chip ${chipCls}">${esc(chipLabel)}</span></td>
+        <td>${versionCell}</td>
+        <td><span class="status-chip ${meta.chipCls}">${esc(meta.label)}</span></td>
       </tr>`;
     }).join('');
     body.innerHTML = `
@@ -622,10 +710,17 @@
         <thead><tr><th style="width:34px"></th><th>插件</th><th>版本</th><th>状态</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
-    document.querySelectorAll('[data-uid]').forEach((el) => {
-      el.onchange = () => {
-        if (el.checked) STATE.updateSel.add(el.dataset.uid);
-        else STATE.updateSel.delete(el.dataset.uid);
+    // 仓库链接点击不触发行切换
+    body.querySelectorAll('.upd-gh').forEach((a) => {
+      a.addEventListener('click', (e) => e.stopPropagation());
+    });
+    // 点击行（含勾选方块）切换选择
+    body.querySelectorAll('.upd-row.selectable').forEach((row) => {
+      row.onclick = () => {
+        const uid = row.dataset.uid;
+        if (STATE.updateSel.has(uid)) STATE.updateSel.delete(uid);
+        else STATE.updateSel.add(uid);
+        renderUpdates();
       };
     });
   }
@@ -792,6 +887,7 @@
             </div>
             <button class="btn btn-success" id="local-proceed" style="display:none;width:100%">检测通过，继续安装</button>
           </div>
+          <div id="cand-area" style="display:none"></div>
           <div id="risk-area"></div>
           <div id="install-status" class="install-status"></div>
         </div>
@@ -800,8 +896,10 @@
           <div class="page-head">
             <div><h2>插件更新</h2><p id="update-summary">检测中…</p></div>
             <div class="actions">
+              <button class="btn btn-ghost" id="btn-select-all">全选</button>
+              <button class="btn btn-ghost" id="btn-select-none">清空</button>
               <button class="btn btn-secondary" id="btn-recheck">重新检测</button>
-              <button class="btn btn-primary" id="btn-apply-update">更新选中</button>
+              <button class="btn btn-primary" id="btn-apply-update" disabled>更新选中</button>
             </div>
           </div>
           <div id="update-status" class="install-status"></div>
@@ -838,6 +936,14 @@
     document.querySelector('[data-go-install]').onclick = () => switchView('install');
     // 更新页按钮
     $('btn-recheck').onclick = () => loadUpdates();
+    $('btn-select-all').onclick = () => {
+      STATE.updateSel = new Set(STATE.updates.filter((p) => p.hasUpdate).map((p) => p.id));
+      renderUpdates();
+    };
+    $('btn-select-none').onclick = () => {
+      STATE.updateSel = new Set();
+      renderUpdates();
+    };
     $('btn-apply-update').onclick = () => applyUpdates();
     // 备份页按钮
     $('btn-backup').onclick = async () => {

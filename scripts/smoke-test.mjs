@@ -159,6 +159,56 @@ try {
   check('zip-check 有效插件', c1.ok === true);
   const c2 = checkLocalSource(path.join(tmp, 'nonexist.zip'), tmp);
   check('zip-check 不存在路径', c2.ok === false);
+
+  // 多层嵌套定位（repo-main/plugins/my-plugin/）
+  const nestedZip = path.join(tmp, 'nested.zip');
+  fs.writeFileSync(nestedZip, makeZip([
+    { name: 'repo-main/README.md', data: Buffer.from('# repo') },
+    { name: 'repo-main/plugins/my-plugin/manifest.json', data: Buffer.from('{"id":"my-plugin","name":"My Plugin","version":"1.0.0"}') },
+    { name: 'repo-main/plugins/my-plugin/index.js', data: Buffer.from('export const x=1;') },
+  ]));
+  const c3 = checkLocalSource(nestedZip, tmp);
+  check('多层嵌套定位', c3.ok === true && c3.pluginRoot.endsWith(path.join('repo-main', 'plugins', 'my-plugin')), c3.errors.join(';'));
+  try { c3.cleanup(); } catch { /* ignore */ }
+
+  // manifest 缺字段不再拒绝（SDK 允许 manifest 可选）
+  const looseZip = path.join(tmp, 'loose.zip');
+  fs.writeFileSync(looseZip, makeZip([
+    { name: 'p/manifest.json', data: Buffer.from('{"id":"p"}') },
+    { name: 'p/index.js', data: Buffer.from('export const x=1;') },
+  ]));
+  const c4 = checkLocalSource(looseZip, tmp);
+  check('manifest 缺 name/version 仍通过', c4.ok === true, c4.errors.join(';'));
+  check('manifest 缺字段有 warning', c4.warnings.length > 0);
+  try { c4.cleanup(); } catch { /* ignore */ }
+
+  // 无 manifest 纯 index/tools 插件（SDK：manifest 可选）
+  const bareZip = path.join(tmp, 'bare.zip');
+  fs.writeFileSync(bareZip, makeZip([
+    { name: 'bare/tools/hello.js', data: Buffer.from('export const name="hello";') },
+  ]));
+  const c5 = checkLocalSource(bareZip, tmp);
+  check('无 manifest 纯工具插件通过', c5.ok === true && c5.contribCount >= 1, c5.errors.join(';'));
+  try { c5.cleanup(); } catch { /* ignore */ }
+
+  // 插件合集：同仓库多个插件（plugins/ + 根目录）→ multiple + candidates
+  const multiZip = path.join(tmp, 'multi.zip');
+  fs.writeFileSync(multiZip, makeZip([
+    { name: 'HanaAgent-Plugins/plugins/download-progress/manifest.json', data: Buffer.from('{"id":"download-progress","name":"Download Progress","version":"1.0.0"}') },
+    { name: 'HanaAgent-Plugins/plugins/download-progress/index.js', data: Buffer.from('export const x=1;') },
+    { name: 'HanaAgent-Plugins/plugins/easymodel-viewer/manifest.json', data: Buffer.from('{"id":"easymodel-viewer","name":"EasyModel Viewer","version":"2.0.0"}') },
+    { name: 'HanaAgent-Plugins/plugins/easymodel-viewer/index.js', data: Buffer.from('export const x=1;') },
+    { name: 'HanaAgent-Plugins/plugins/ns-new-session/manifest.json', data: Buffer.from('{"id":"ns-new-session","name":"NS New Session","version":"1.0.0"}') },
+    { name: 'HanaAgent-Plugins/plugins/ns-new-session/index.js', data: Buffer.from('export const x=1;') },
+    { name: 'HanaAgent-Plugins/qq-group-patrol-skill/SKILL.md', data: Buffer.from('# QQ Patrol Skill') },
+    { name: 'HanaAgent-Plugins/qq-group-patrol-skill/scripts/patrol.py', data: Buffer.from('# patrol') },
+  ]));
+  const c6 = checkLocalSource(multiZip, tmp);
+  check('插件合集识别 multiple', c6.ok === true && c6.multiple === true, JSON.stringify(c6.errors || []));
+  check('插件合集候选数量', !!c6.candidates && c6.candidates.length === 4, String(c6.candidates && c6.candidates.length));
+  check('插件合集候选含 manifest', !!c6.candidates && c6.candidates.filter((x) => x.manifest).length === 3);
+  check('插件合集候选含 SKILL.md 目录', !!c6.candidates && c6.candidates.some((x) => !x.manifest));
+  try { c6.cleanup(); } catch { /* ignore */ }
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
@@ -167,6 +217,7 @@ try {
 section('路径白名单');
 const { safePathSegment } = await import('../lib/hana-api.js');
 check('合法 id', safePathSegment('my-plugin') === 'my-plugin');
+check('接受冒号 id（SDK 规范）', safePathSegment('my:plugin') === 'my:plugin');
 check('拒绝 @scope（hana id 应为简单名）', safePathSegment('@scope') === null);
 check('拒绝 ..', safePathSegment('..') === null);
 check('拒绝 斜杠', safePathSegment('../x') === null);

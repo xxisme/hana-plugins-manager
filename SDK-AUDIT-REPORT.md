@@ -125,3 +125,128 @@
 | 后端/工具错误信息 | `HANA_HOME 未配置` | `未配置 Hana 主目录` / `未检测到 Hana 主目录` |
 
 > 术语约定：正文统一使用「Hana」，主目录路径用「Hana 主目录」；`HANA_HOME` 仅保留为环境变量名引用。
+
+---
+
+## 六、追加修订(2026-08-25)：安装/更新判定放宽 + 更新页选择修复
+
+### 6.1 判定放宽的背景
+
+对照 SDK 目录契约(PLUGINS.md「目录结构」)后确认，原实现的判定比 SDK 严格：
+
+| SDK 标准 | 原实现 | 问题 |
+|---|---|---|
+| `manifest.json` **可选**，无 manifest 时 id 取目录名、权限默认 restricted | manifest 存在时必须同时有 `id/name/version`，缺失即拒绝 | 误杀大量仅缺 version/name 的仓库 |
+| id 规则 `[A-Za-z0-9][A-Za-z0-9._:-]*` | 白名单 `[a-zA-Z0-9._-]` | 拒绝含 `:` 的 id |
+| 插件可位于仓库子目录(monorepo / 包裹目录) | 只认根目录 manifest 或单层唯一包裹目录 | 多层嵌套(如 `repo-main/plugins/my-plugin/`)被误判为"非插件" |
+| 目录契约含 `assets/`、`extensions/` | 未列入贡献目录 | 纯 `extensions/` 插件的结构判断偏严 |
+
+### 6.2 已实施的放宽(本轮完成)
+
+1. **`lib/zip-check.js`**
+   - 新增 `locatePluginRoot()`：BFS 下探最多 4 层定位插件根目录，优先含 `manifest.json` 的目录，其次含 `index.js`/贡献目录的目录；同层多候选时交由宿主判定。
+   - manifest 字段校验放宽：`id/name/version` 缺失从 error 降级为 warning；id 白名单补 `:`。
+   - 贡献目录对齐 SDK 契约(增加 `assets`、`extensions`，保留 legacy `widgets/pages`)。
+   - 仅"无 manifest 且无 index 且无任何贡献目录"这类真正非插件目录才拒绝。
+   - **原则：前置校验只负责"定位 + 元数据 + 风险检测"，最终结构判定交给宿主 `POST /api/plugins/install`。**
+2. **`lib/github.js` `getRemoteVersion()`**
+   - 探测顺序扩展为：根目录 manifest/package.json → 嵌套目录(顶层单包裹目录 / `plugins/` 子目录) → **release tag 兜底**(去掉 `v` 前缀)。
+   - 对 monorepo、包裹仓库、无 version 但打了 release tag 的仓库，更新检测不再误报 `check-failed`。
+3. **`lib/hana-api.js` `safePathSegment()`**：白名单补 `:`，对齐 SDK id 规范。
+4. **`lib/scanner.js`**：贡献目录清单补 `extensions`。
+5. **`lib/updater.js`**：结构校验失败时错误信息附带 warnings，便于定位。
+
+### 6.3 "是否有必要前置调用 hana 的工具"结论
+
+- **安装/更新执行**：当前已经走宿主 `POST /api/plugins/install`(`installFromPath`)完成 staging/校验/热加载/回滚，**不需要再前置调用宿主工具**。
+- **前置校验应保留但放宽**：它承载了**风险检测(安全)与 staging 定位**，价值独立于宿主校验；本轮已把它从"结构门禁"改为"安全检测 + 提示"，不再因字段瑕疵阻断。
+- **更新检测宿主无此能力**：宿主不提供"检查远端版本"API，只能插件自己访问 GitHub；已通过嵌套探测与 release 兜底提高识别率。
+
+### 6.4 更新页选择逻辑修复(本轮完成)
+
+原实现更新表格虽有隐藏的 `<input type="checkbox">`，但无可见选项样式、无全选/清空，且「更新选中」始终可点，UI 与逻辑脱节。已改为：
+
+- 表格行首自定义勾选方块(选中显示对勾 SVG)，**点击整行即可切换选择**；
+- 页头新增「全选」「清空」按钮；
+- 摘要改为「已选 x / 可更新 y」实时计数；
+- 「更新选中」在未选择时置灰禁用，避免空跑。
+
+### 6.5 验证
+
+- `scripts/smoke-test.mjs`：59 → **64 项全通过**，新增用例覆盖多层嵌套定位、manifest 缺字段放行、无 manifest 纯工具插件、冒号 id 放行。
+- 所有改动 lint 零报错。
+
+---
+
+## 七、追加修订(2026-08-25)：插件合集仓库识别与单选安装
+
+### 7.1 背景
+
+以 `github.com/JohnGalt0802/HanaAgent-Plugins` 为代表的仓库是**插件合集**：同一仓库/压缩包内含多个插件，甚至混合不同层级(根目录 + `plugins/` 子目录)。原实现对"同层多候选"返回失败或交由宿主判定，无法提示用户选择。
+
+真实结构(已用 GitHub API 核对)：
+```text
+HanaAgent-Plugins/
+├── plugins/
+│   ├── download-progress/   (插件 manifest)
+│   ├── easymodel-viewer/    (插件 manifest)
+│   └── ns-new-session/      (插件 manifest)
+└── qq-group-patrol-skill/   (无 manifest，单文件 SKILL.md 形态)
+```
+
+### 7.2 实现
+
+1. **`lib/zip-check.js`**
+   - `collectCandidates()`：BFS 下探最多 4 层，收集所有"看起来像插件"的目录(含 `manifest.json` / `index.js|ts` / 贡献目录 / 根目录 `SKILL.md`)；排序为含 manifest 优先、深度优先。
+   - 多候选时返回 `{ ok: true, multiple: true, candidates: [...] }`，不再视为错误。
+   - 单候选/零候选逻辑不变。
+2. **`routes/api.js`**
+   - `github-apply` 与 `install/local` 端点：检测到 `check.multiple` 时，为每个候选运行风险检测，返回 `candidates: [{ pluginRoot, pluginId, pluginName, version, trust, risk }]`。
+3. **`app/manager.js`**
+   - 新增 `renderCandidates()`：在安装页渲染候选卡片(名称/版本/信任/风险)，**点击选中某项**后显示"继续安装"；
+   - 安装状态提示"该来源包含 N 个插件，请选择要安装的一项"；
+   - 新增 `resetInstallPanel()` 统一清理候选区/继续按钮/仓库信息，修复了 GitHub 流程"继续安装"按钮在下载完成前过早出现的问题。
+4. **`app/manager.css`**：候选卡片(选中描边、hover)样式。
+
+### 7.3 端到端验证
+
+- **真实仓库** `JohnGalt0802/HanaAgent-Plugins` 下载 zip 实测：识别出 **4 个候选**——
+  `download-progress`(v0.5.6)、`easymodel-viewer`(v2.0.0)、`ns-new-session`(v1.0.0)、`qq-group-patrol-skill`(SKILL.md 形态)。
+- `scripts/smoke-test.mjs`：64 → **68 项全通过**，新增用例覆盖"插件合集 multiple 识别、候选数量、manifest/SKILL.md 混合候选"。
+- lint 零报错。
+
+> 说明：用户选择后，所选候选的 `pluginRoot`(staging 内目录)会作为 `sourcePath` 交给宿主 `POST /api/plugins/install` 完成安装与热加载；未选中的 staging 目录保留在 `dataDir/tmp`，随插件卸载时清理。
+
+---
+
+## 八、追加修订(2026-08-25)：更新页勾选与检测状态优化
+
+### 8.1 用户反馈
+
+更新 tab 出现两个问题：
+
+1. **没有选择框**：表格中检测失败的插件(DSHana / Hanako Mail / SQLite)无法勾选——原逻辑只在 `hasUpdate=true` 时才渲染勾选框。
+2. **检测更新状态全部失败**：所有失败被归为同一 `check-failed` 状态，错误信息也笼统地显示"远端未找到 version(manifest/package.json 均缺失，也无 release tag)"，用户无法区分是 **仓库不存在(404)**、**仓库存在但无 version 字段**，还是 **网络/限流**。
+
+### 8.2 修复
+
+1. **`lib/github.js`**
+   - `readVersionFrom()` 现在把 `upstreamStatus` 透传出来，区分文件级 404 与无 version 字段两种情形。
+   - `findNestedVersion()` 候选目录从 `plugins` 扩展到 `plugins / plugin / packages / src / apps / tools / services` 七种常见命名；列表 API 失败直接判定为 **仓库不存在(404)**。
+   - `getRemoteVersion()` 失败时返回细分状态：
+     - `status: 'upstream-404'` — 仓库/文件 404(不存在、链接错误或私有仓库无权限)
+     - `status: 'no-version'` — 仓库存在但 manifest/package.json 均无 `version`、也无 release tag
+     - `status: 'check-failed'` — 网络/限流等其他失败
+2. **`lib/updater.js`** 把 `rv.status` 透传成 updater 项的 `status` 字段。
+3. **`app/manager.js renderUpdates`**
+   - 勾选框显示条件从 `p.hasUpdate` 放宽为 `p.status !== 'no-source'`(有 GitHub 关联即显示)；用户可对 `upstream-404` / `no-version` / `check-failed` 状态项勾选后**强制重试/重装**。
+   - 状态 chip 颜色映射新增 `upstream-404` / `no-version`。
+   - 失败/无 version 的行在版本列展示具体错误 + **「打开仓库」按钮**(链接取自关联 `github.url`)，方便用户直接核实关联地址是否正确。
+   - 「打开仓库」链接 `stopPropagation`，不会触发行切换。
+4. **`app/manager.css`**：新增 `.status-chip.upstream-404` / `.status-chip.no-version` 颜色、`.upd-err` 错误行排版、`.upd-gh` 打开仓库按钮。
+
+### 8.3 验证
+
+- `scripts/smoke-test.mjs`：**68 项全通过**(本次未新增离线用例；端到端状态字段在路由/UI 层透传)。如需为状态机加单测，可对 `getRemoteVersion` 做基于 mock fetch 的覆盖。
+- lint 零报错。
+- 用户体验路径：现在看到"检测失败"或"仓库 404"或"无 version"时，一眼能区分是关联错了、还是仓库本身没版本信息；点"打开仓库"直接核实。
