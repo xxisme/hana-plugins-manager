@@ -983,8 +983,10 @@
   function renderBackup() {
     const list = $('backup-list');
     $('backup-count').textContent = STATE.backups.length + ' 份备份';
-    if (!STATE.backups.length) { list.innerHTML = '<div class="empty"><h3>暂无备份</h3><p>点击右上角「全量备份」保护你的插件</p></div>'; return; }
-    list.innerHTML = STATE.backups.map((b, i) => {
+    // 还原功能灰度提示（暂时屏蔽还原入口，保留备份/备注/删除）
+    const banner = '<div class="restore-banner">⚠ 插件还原功能灰度测试中，暂不可用。可采用常规安装方式还原已备份的插件：在「安装」页 → 本地 zip / 目录，选择备份目录里的插件文件夹导入。</div>';
+    if (!STATE.backups.length) { list.innerHTML = banner + '<div class="empty"><h3>暂无备份</h3><p>点击右上角「全量备份」保护你的插件</p></div>'; return; }
+    list.innerHTML = banner + STATE.backups.map((b, i) => {
       const m = b.meta || {};
       const note = m.note ? `<small>备注：${esc(m.note)}</small>` : '';
       return `
@@ -994,7 +996,7 @@
           <small>${esc(fmtDate(m.timestamp))} · ${m.pluginCount || 0} 插件 · ${m.fileCount || 0} 文件</small>
           ${note}
         </div>
-        <button class="btn btn-ghost" data-restore-one="${esc(b.dir)}">还原</button>
+        <button class="btn btn-ghost" data-restore-one="${esc(b.dir)}" disabled title="插件还原功能灰度测试中，可以采用常规安装方式还原已备份的插件">还原</button>
         <button class="btn btn-ghost" data-note="${esc(b.dir)}">备注</button>
         <button class="btn btn-danger" data-del="${esc(b.dir)}">删除</button>
       </div>`;

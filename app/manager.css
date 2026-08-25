@@ -514,3 +514,18 @@ html, body {
 }
 .discover-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 8px; }
 .discover-repo { font-size: 10.5px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── 备份还原：还原功能灰度屏蔽 ───────────── */
+.btn:disabled, .btn[disabled] {
+  opacity: 0.45; cursor: not-allowed;
+  box-shadow: none; transform: none;
+  pointer-events: auto; /* 保留 title 提示可 hover 展示 */
+}
+.restore-banner {
+  background: rgba(166, 123, 63, 0.10);
+  border: 1px solid rgba(166, 123, 63, 0.28);
+  color: var(--warn);
+  padding: 9px 12px; border-radius: 9px;
+  font-size: 12.5px; line-height: 1.6; font-weight: 500;
+  margin-bottom: 12px;
+}
