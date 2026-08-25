@@ -89,12 +89,13 @@
    * iframe 内 prompt() 会被浏览器拦截,必须用自绘弹窗。
    */
   function promptModal(title, arg1 = {}, arg2 = '', arg3 = '') {
-    let label = '', placeholder = '', defaultValue = '', type = 'password';
+    let label = '', placeholder = '', defaultValue = '', type = 'password', help = '';
     if (typeof arg1 === 'object' && arg1 !== null) {
       label = arg1.label || '';
       placeholder = arg1.placeholder || '';
       defaultValue = arg1.defaultValue || '';
       type = arg1.type || 'password';
+      help = arg1.help || ''; // 可选的帮助/指引 HTML 块（静态安全内容，不做转义）
     } else {
       label = arg1 || '';
       placeholder = arg2 || '';
@@ -106,6 +107,7 @@
       back.innerHTML = `
         <div class="modal">
           <h3>${esc(title)}</h3>
+          ${help ? `<div class="modal-help">${help}</div>` : ''}
           <div class="field" style="margin:14px 0">
             ${label ? `<label>${esc(label)}</label>` : ''}
             <input class="input" id="prompt-modal-input" type="${esc(type)}" placeholder="${esc(placeholder)}" value="${esc(defaultValue)}">
@@ -146,7 +148,25 @@
     const hint = fromEnv
       ? '当前：来自环境变量 GITHUB_TOKEN（前端无法修改）'
       : (masked ? `当前：${masked}（留空不修改）` : '当前：未配置');
-    const token = await promptModal('配置 GitHub Token', `Personal Access Token（需 repo 权限）· ${hint}`, 'ghp_xxxxxxxxxxxxxxxxxxxx', '');
+    // 申请指引：教用户去 GitHub 创建 Personal Access Token
+    const HELP = `
+      <b>如何申请 GitHub Token（约 1 分钟）：</b>
+      <ol>
+        <li>打开 <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>（需登录 GitHub）</li>
+        <li>点右上角 <b>Generate new token</b> → 选 <b>Generate new token (classic)</b></li>
+        <li>Note 随意填（如 hana-plugins-manager）</li>
+        <li>勾选 <b>repo</b> 权限（私有仓库需要；仅避免限流也可不勾）</li>
+        <li>点底部 <b>Generate token</b>，复制生成的 <code>ghp_…</code> 字符串</li>
+        <li>粘贴到下方输入框，点保存</li>
+      </ol>
+      <p style="margin-top:6px;color:var(--ink-faint)">Token 仅保存在本机插件数据目录，不会上传。配好后限流配额从 60 次/时提升到 5000 次/时。</p>`;
+    const token = await promptModal('配置 GitHub Token', {
+      label: `Personal Access Token · ${hint}`,
+      placeholder: 'ghp_xxxxxxxxxxxxxxxxxxxx',
+      defaultValue: '',
+      type: 'password',
+      help: HELP,
+    });
     if (token === null) return;
     if (!token.trim()) { toast('已取消', 'info'); return; }
     const r = await api('POST', '/api/github-token', { token: token.trim() });
@@ -786,6 +806,27 @@
     btn.title = home ? `打开 Hana 插件文件夹：${home}` : '未配置 Hana 插件文件夹';
   }
 
+  /** 更新页顶部的 GitHub Token 状态提示条：无 token 时引导配置，限流时醒目提醒 */
+  function tokenBanner() {
+    const t = STATE.status && STATE.status.githubToken;
+    const hasToken = !!(t && t.hasToken);
+    const fromEnv = !!(t && t.fromEnv);
+    // 本次检测是否有失败且错误含“限流”关键字 → 限流场景下提示更醒目
+    const limited = STATE.updates.some((p) =>
+      (p.status === 'check-failed' || p.status === 'upstream-404') && String(p.upstreamError || '').includes('限流'));
+    if (!hasToken) {
+      const warnTxt = limited
+        ? '检测到 GitHub API 限流（匿名 60 次/小时已用完），当前检测结果可能不准。'
+        : '未配置 GitHub Token：匿名 API 限流 60 次/小时，检测频繁时会被限流。';
+      return `<div class="token-banner warn">
+        <span>⚠ ${warnTxt} 配置 Token 后提升到 5000 次/小时，并支持私有仓库。</span>
+        <button class="btn btn-secondary btn-token" data-cfg-token title="填写 GitHub Token（含申请步骤）">配置 Token</button>
+      </div>`;
+    }
+    if (fromEnv) return '<div class="token-banner ok">✓ Token 来自环境变量 GITHUB_TOKEN（前端不可修改）</div>';
+    return '<div class="token-banner ok">✓ 已配置 GitHub Token，限流配额已提升</div>';
+  }
+
   function renderUpdates() {
     const body = $('update-body');
     updateSelectSummary();
@@ -827,6 +868,7 @@
       </tr>`;
     }).join('');
     body.innerHTML = `
+      ${tokenBanner()}
       <table class="update-table">
         <thead><tr><th style="width:34px"></th><th>插件</th><th>版本</th><th>状态</th></tr></thead>
         <tbody>${rows}</tbody>
