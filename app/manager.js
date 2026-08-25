@@ -234,7 +234,9 @@
   // ── 顶栏 ─────────────────────────────────
   function renderTopbar() {
     const s = STATE.status;
-    const home = s && s.hanaHome ? s.hanaHome : '';
+    // 顶栏展示的「Hana 插件文件夹」是 pluginsDir（hanaHome 下的 plugins 子目录），
+    // 而不是 hanaHome 本体。hanaHome 只用于拼接 plugin-data 等其他子目录。
+    const home = s && s.pluginsDir ? s.pluginsDir : '';
     let serverText, serverPulseCls;
     if (!s) {
       serverText = '加载中';
@@ -635,13 +637,17 @@
         if (!ok) return;
       }
       setInstallStatus('installing');
-      const r = await api('POST', '/api/install/confirm', { sourcePath: p.sourcePath }, { timeoutMs: 60000 });
+      const r = await api('POST', '/api/install/confirm', {
+        sourcePath: p.sourcePath,
+        // GitHub 路径带 url，让后端自动关联（overwrite=false，不会破坏已有设置）
+        ...(p.type === 'github' && p.url ? { githubUrl: p.url } : {}),
+      }, { timeoutMs: 60000 });
       if (r && r.ok) {
         setInstallStatus('success');
         toast('安装成功', 'success');
-        if (r.installed && r.installed.id) {
-          // 自动关联 GitHub
-          await api('POST', '/api/plugins/' + encodeURIComponent(r.installed.id) + '/source', { githubUrl: p.url });
+        // 后端自动关联产生的警告（如已存在不同 source 不覆盖）通过 warnings 字段透传
+        if (Array.isArray(r.warnings) && r.warnings.length) {
+          for (const w of r.warnings) toast(w, 'warning');
         }
         STATE.risk = null; STATE.pendingInstall = null;
         resetInstallPanel();
@@ -764,7 +770,8 @@
   function updateOpenHomeBtn() {
     const btn = $('btn-open-home');
     if (!btn) return;
-    const home = (STATE.status && STATE.status.hanaHome) || null;
+    // 同 renderTopbar:按钮作用对象是 plugins 目录,而不是 hanaHome
+    const home = (STATE.status && STATE.status.pluginsDir) || null;
     btn.disabled = !home;
     btn.title = home ? `打开 Hana 插件文件夹：${home}` : '未配置 Hana 插件文件夹';
   }
@@ -1094,7 +1101,8 @@
     const btnOpenHome = $('btn-open-home');
     if (btnOpenHome) {
       btnOpenHome.onclick = async () => {
-        const home = (STATE.status && STATE.status.hanaHome) || null;
+        // 打开目标与顶栏展示保持一致:plugins 目录
+        const home = (STATE.status && STATE.status.pluginsDir) || null;
         const r = await api('POST', '/api/open-path', { path: home });
         if (r && r.ok) toast('已尝试打开 Hana 插件文件夹', 'success');
         else toast((r && r.error) || '打开失败', 'error');

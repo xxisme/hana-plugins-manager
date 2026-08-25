@@ -9,6 +9,7 @@ import * as hanaApi from '../lib/hana-api.js';
 import * as gh from '../lib/github.js';
 import { checkLocalSource } from '../lib/zip-check.js';
 import { runRiskCheck } from '../lib/risk-check.js';
+import { setSource } from '../lib/sources.js';
 
 export const name = 'hana_install_plugin';
 export const description = '安装 Hana 插件：输入 GitHub 地址或本地 zip/目录路径，自动下载、风险检测后安装';
@@ -69,7 +70,31 @@ export async function execute(input = {}) {
 
     const r = await hanaApi.installFromPath(home, stagedRoot, {});
     if (!r.ok) return { ok: false, error: r.error, risk };
-    return { ok: true, installed: r.data, risk: { level: risk.level, findings: risk.findings.length } };
+
+    // GitHub 安装路径：成功后自动关联 source（不覆盖已有设置）
+    const warnings = [];
+    if (isGitHub && r.data && r.data.id) {
+      const safeId = hanaApi.safePathSegment(r.data.id);
+      if (safeId) {
+        try {
+          const sr = setSource(dataDir, safeId, source, { overwrite: false });
+          if (!sr.saved && sr.reason === 'already-set') {
+            warnings.push(`已存在 GitHub 关联 ${sr.existing.githubUrl},未覆盖为 ${source}`);
+          }
+        } catch (e) {
+          warnings.push(`自动关联 GitHub 失败: ${e.message}`);
+        }
+      } else {
+        warnings.push(`插件 id "${r.data.id}" 不合法,跳过 GitHub 自动关联`);
+      }
+    }
+
+    return {
+      ok: true,
+      installed: r.data,
+      risk: { level: risk.level, findings: risk.findings.length },
+      ...(warnings.length ? { warnings } : {}),
+    };
   } catch (e) {
     return { ok: false, error: e.message };
   }

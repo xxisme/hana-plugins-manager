@@ -292,7 +292,8 @@ export default function (app, ctx) {
     const id = hanaApi.safePathSegment(c.req.param('id'));
     if (!id) return c.json({ ok: false, error: '非法插件 id' }, 400);
     try {
-      const r = setSource(dataDir, id, githubUrl);
+      // 手动关联场景：用户主动改，明确传 overwrite=true 允许覆盖
+      const r = setSource(dataDir, id, githubUrl, { overwrite: true });
       UPDATE_CHECK_CACHE.clear(); // 关联变化后立即让更新检测失效
       appendLog(dataDir, { action: 'source.set', pluginId: id, ok: true, githubUrl });
       return c.json({ ok: true, ...r });
@@ -402,8 +403,10 @@ export default function (app, ctx) {
   });
 
   // ── 安装：确认并安装 staged（github 或 local 通用）──
+  // 可选 githubUrl：传了则在安装成功后自动关联该 GitHub 地址（已有不同 source 时不覆盖，
+  // 结果通过 warnings 字段返回给前端 toast 提示）
   app.post('/api/install/confirm', async (c) => {
-    const { sourcePath, allowDowngrade = false } = await c.req.json();
+    const { sourcePath, allowDowngrade = false, githubUrl } = await c.req.json();
     const home = currentHome();
     if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!sourcePath || !fs.existsSync(sourcePath)) {
@@ -417,7 +420,30 @@ export default function (app, ctx) {
         status: r.status,
       });
       if (!r.ok) return c.json({ ok: false, error: r.error, status: r.status }, r.status || 500);
-      return c.json({ ok: true, installed: r.data });
+
+      // 自动关联 GitHub（幂等,不覆盖已有设置）
+      const warnings = [];
+      if (githubUrl && r.data && r.data.id) {
+        const safeId = hanaApi.safePathSegment(r.data.id);
+        if (!safeId) {
+          warnings.push(`插件 id "${r.data.id}" 不合法,跳过 GitHub 自动关联`);
+        } else {
+          try {
+            const sr = setSource(dataDir, safeId, githubUrl, { overwrite: false });
+            if (sr.saved) {
+              UPDATE_CHECK_CACHE.clear();
+              appendLog(dataDir, { action: 'source.set.auto', pluginId: safeId, ok: true, githubUrl });
+            } else if (sr.reason === 'already-set') {
+              warnings.push(`已存在 GitHub 关联 ${sr.existing.githubUrl},未覆盖为 ${githubUrl}`);
+              appendLog(dataDir, { action: 'source.set.auto', pluginId: safeId, ok: false, reason: 'already-set', existingUrl: sr.existing.githubUrl, githubUrl });
+            }
+          } catch (e) {
+            warnings.push(`自动关联 GitHub 失败: ${e.message}`);
+            appendLog(dataDir, { action: 'source.set.auto', pluginId: safeId, ok: false, error: e.message, githubUrl });
+          }
+        }
+      }
+      return c.json({ ok: true, installed: r.data, warnings });
     } catch (e) {
       return c.json({ ok: false, error: e.message }, 500);
     }
