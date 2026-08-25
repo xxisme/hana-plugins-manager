@@ -82,8 +82,24 @@
     const el = document.getElementById('loading');
     if (el) el.remove();
   }
-  /** 单输入框模态(用于 GitHub Token 等) */
-  function promptModal(title, label, placeholder = '', defaultValue = '') {
+  /**
+   * 单输入框模态。兼容两种调用：
+   *  promptModal(title, label, placeholder, defaultValue)   —— 带 label(旧用法,密码框)
+   *  promptModal(title, { label, placeholder, defaultValue, type }) —— 对象参数(新用法)
+   * iframe 内 prompt() 会被浏览器拦截,必须用自绘弹窗。
+   */
+  function promptModal(title, arg1 = {}, arg2 = '', arg3 = '') {
+    let label = '', placeholder = '', defaultValue = '', type = 'password';
+    if (typeof arg1 === 'object' && arg1 !== null) {
+      label = arg1.label || '';
+      placeholder = arg1.placeholder || '';
+      defaultValue = arg1.defaultValue || '';
+      type = arg1.type || 'password';
+    } else {
+      label = arg1 || '';
+      placeholder = arg2 || '';
+      defaultValue = arg3 || '';
+    }
     return new Promise((resolve) => {
       const back = document.createElement('div');
       back.className = 'modal-backdrop';
@@ -91,8 +107,8 @@
         <div class="modal">
           <h3>${esc(title)}</h3>
           <div class="field" style="margin:14px 0">
-            <label>${esc(label)}</label>
-            <input class="input" id="prompt-modal-input" type="password" placeholder="${esc(placeholder)}" value="${esc(defaultValue)}">
+            ${label ? `<label>${esc(label)}</label>` : ''}
+            <input class="input" id="prompt-modal-input" type="${esc(type)}" placeholder="${esc(placeholder)}" value="${esc(defaultValue)}">
           </div>
           <div class="modal-actions">
             <button class="btn btn-secondary" data-act="cancel">取消</button>
@@ -100,7 +116,11 @@
           </div>
         </div>`;
       document.body.appendChild(back);
-      requestAnimationFrame(() => { back.classList.add('show'); back.querySelector('#prompt-modal-input').focus(); });
+      requestAnimationFrame(() => {
+        back.classList.add('show');
+        const inp = back.querySelector('#prompt-modal-input');
+        if (inp) { inp.focus(); inp.select(); }
+      });
       const input = back.querySelector('#prompt-modal-input');
       const close = (val) => {
         back.classList.remove('show');
@@ -112,7 +132,7 @@
         else if (e.target.dataset.act === 'ok') close(input.value);
       });
       input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') close(input.value);
+        if (e.key === 'Enter') { e.preventDefault(); close(input.value); }
         else if (e.key === 'Escape') close(null);
       });
     });
@@ -172,7 +192,7 @@
   // ── 路由与状态加载 ───────────────────────
   async function loadStatus() {
     const r = await api('GET', '/api/status');
-    if (r && r.ok) {
+    if (r && (r.ok || r.server)) {  // /api/status 总是返回 server 字段（即使 ok:false）
       STATE.status = r;
       renderTopbar();
     }
@@ -871,7 +891,8 @@
     document.querySelectorAll('[data-note]').forEach((el) => {
       el.onclick = async () => {
         const dir = el.dataset.note;
-        const note = prompt('备注：', '');
+        const cur = ((STATE.backups.find((b) => b.dir === dir) || {}).meta || {}).note || '';
+        const note = await promptModal('修改备份备注', { defaultValue: cur, placeholder: '输入备注，保存后显示在备份卡片上' });
         if (note === null) return;
         const r = await api('POST', '/api/backup/note', { backupDir: dir, note });
         if (r && r.ok) { toast('已更新备注', 'success'); loadBackups(); }
@@ -1031,7 +1052,8 @@
     // 更新页按钮
     $('btn-recheck').onclick = () => loadUpdates();
     $('btn-select-all').onclick = () => {
-      STATE.updateSel = new Set(STATE.updates.filter((p) => p.hasUpdate).map((p) => p.id));
+      // 全选：勾选所有可勾选(已关联 source)的插件
+      STATE.updateSel = new Set(STATE.updates.filter((p) => p.status !== 'no-source').map((p) => p.id));
       renderUpdates();
     };
     $('btn-select-none').onclick = () => {

@@ -378,6 +378,8 @@ html, body {
 .modal h3 { font-size: 16px; font-weight: 600; margin-bottom: 10px; }
 .modal p { color: var(--text-2); font-size: 13px; margin-bottom: 18px; }
 .modal .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.modal .modal-input { width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border-strong, rgba(44,62,80,0.2)); background: var(--bg-soft, #fafaf7); color: var(--text-1); font-size: 13px; margin-bottom: 18px; outline: none; }
+.modal .modal-input:focus { border-color: var(--accent, #C25B4F); }
 
 /* ── Toast ───────────────────────────── */
 .toast-wrap { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 90; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }

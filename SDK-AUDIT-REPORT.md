@@ -531,3 +531,99 @@ const rv = await getRemoteVersion(src.owner, src.repoName, src.branch, dataDir);
 
 - smoke-test **68 项全过**，lint 零报错
 - `Hanako Mail` 修复后应直接读到 version，不再 404
+
+### 14.9 三次诊断：状态「加载中」真因 = loadStatus 永远不通过 `r.ok` 判定
+
+用户报告右上角状态一直显示「加载中」+ 红点。
+
+**真因**：`/api/status` 返回结构是 `{ hanaHome, server, api, ... }`——**没有 `ok` 字段**。但前端：
+
+```js
+async function loadStatus() {
+  const r = await api('GET', '/api/status');
+  if (r && r.ok) {          // ← r.ok 是 undefined，falsy
+    STATE.status = r;
+    renderTopbar();         // ← 永远不被调用
+  }
+}
+```
+
+→ `STATE.status` 永远是 null → `renderTopbar` 永远不被调用 → `hud-server` **永远是 init HTML 写死的「加载中」**。
+
+对比其他 load 函数：
+- `loadPlugins` / `loadBackups` / `loadLogs`：后端都返回 `{ ok: true, ... }` → 正常
+- `loadStatus`：后端 **没有** `ok` → 永远失败
+
+**修复**：
+- 后端 `routes/api.js /api/status` 加上 `{ ok: true, ...(await getStatus()) }` 包装（与其他端点统一）
+- 前端 `loadStatus` 兜底：`if (r && (r.ok || r.server))`
+
+### 14.10 DSHana 完整更新流程实测 = 成功
+
+按用户要求实测 `applyUpdates('dsh-hanako')` 全链路：
+
+```
+prepareUpdate('dsh-hanako'):
+  ↓
+downloadRepoZip → https://codeload.github.com/Nyasers/dsh-hanako/zip/refs/heads/master
+  → HTTP 200，zip 写入 tmp
+  ↓
+checkLocalSource → 校验 manifest.json / 入口 / 风险检测
+  → ok=true，risk.level=high（多 child_process / spawn 调用，但都是插件自身功能）
+  ↓
+installFromPath(home, pluginRoot, { allowDowngrade: true })
+  → POST http://127.0.0.1:<port>/api/plugins/install
+  → 200 OK，返回 { id: 'dsh-hanako', version: '0.16.1', ... }
+  ↓
+安装到 C:\Users\Administrator\.hanako\plugins\dsh-hanako 成功
+```
+
+**结论**：更新代码逻辑完全正确，能从 0.15.5 升到 0.16.1。用户截图显示「正在更新 1/1: dsh-hanako…」+ 转圈，是 API 调用正在跑中的瞬间截图（applyUpdates 全程需 10~30s）。等几秒应自动显示「更新完成：1/1 成功」toast。
+
+如果更新后 UI 没刷新到新版本，是 `loadUpdates()` 后置调用 + 浏览器缓存；点「重新检测」即可。
+
+### 14.11 验证
+
+- smoke-test **68 项全过**，lint 零报错
+- DSHana 完整 `prepareUpdate → installFromPath` 端到端实测成功
+
+### 14.12 四次修订：按钮失效修复（全选 / 备注）+ 同类按钮排查
+
+用户反馈两个按钮无效：
+1. 更新 tab「全选」无效
+2. 备份还原 tab「备注」无效
+
+#### 14.12.1 全选按钮
+
+之前逻辑：只选中 `hasUpdate` 的插件。当列表里插件已全部最新或处于 404/无 version 状态时，全选后选中集为空 → 视觉上"无效"。
+
+修复：全选改为选中**所有已关联 source（勾选框可见）**的插件：
+
+```js
+STATE.updateSel = new Set(STATE.updates.filter((p) => p.status !== 'no-source').map((p) => p.id));
+```
+
+#### 14.12.2 备注按钮（根因：prompt() 在 iframe 中不工作）
+
+插件 UI 运行在 iframe 中，`prompt()` 会被浏览器（sandbox 缺 `allow-modals`）直接拦截返回 null → 点击备注没任何反应。
+
+修复：改用自绘 `promptModal` 弹窗（带默认值/占位符/Enter/Esc 支持）。
+
+#### 14.12.3 promptModal 合并（避免函数覆盖冲突）
+
+发现代码中**已有**一个 `promptModal(title, label, placeholder, defaultValue)`（token 弹窗用，password 类型），本次又新增一个同名函数会覆盖它。合并为**兼容两种签名**的统一版本：
+
+- `promptModal(title, label, placeholder, defaultValue)` —— 旧用法（token 弹窗）
+- `promptModal(title, { label, placeholder, defaultValue, type })` —— 新用法（备注弹窗，type 可切换 text/password）
+
+#### 14.12.4 同类按钮全面排查（结果均正常）
+
+- 更新页：`btn-recheck` / `btn-select-none`(清空) / `btn-apply-update` ✓
+- 备份页：`btn-backup` / `btn-restore-open` / `data-restore-one` / `data-del` ✓
+- 管理页：`data-detail` / `data-update` / `data-uninstall` ✓
+- 安装页：`gh-analyze` / `gh-proceed` / `local-browse` / `local-analyze` / `local-proceed` / `renderCandidates` ✓
+- 详情 drawer：`save-gh` / `clear-gh` ✓
+
+#### 14.12.5 验证
+
+- `node --check app/manager.js` 通过，smoke-test **68 项全过**，lint 零报错

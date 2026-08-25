@@ -168,7 +168,7 @@ export default function (app, ctx) {
   });
 
   // ── status ─────────────────────────────
-  app.get('/api/status', async (c) => c.json(await getStatus()));
+  app.get('/api/status', async (c) => c.json({ ok: true, ...(await getStatus()) }));
 
   // 安全打开本地目录（仅 HANA_HOME 及其子目录）
   app.post('/api/open-path', async (c) => {
