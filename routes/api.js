@@ -710,8 +710,29 @@ export default function (app, ctx) {
   });
 
   // ── 文件浏览器 ─────────────────────────
+  // 我的电脑（盘符列表）视图 token：path 为该值时返回所有存在的盘符
+  const DRIVES_TOKEN = '__drives__';
+  /** Windows 盘符根（如 C:\） */
+  function isDriveRoot(p) {
+    return /^[a-zA-Z]:[\\/]$/.test(p);
+  }
+  /** 枚举本机存在的盘符（A: ~ Z:） */
+  function listDrives() {
+    const drives = [];
+    for (let i = 65; i <= 90; i++) {
+      const root = String.fromCharCode(i) + ':\\';
+      try { if (fs.existsSync(root)) drives.push({ name: root, isDir: true, isFile: false }); } catch { /* ignore */ }
+    }
+    return drives;
+  }
+
   app.get('/api/browse', (c) => {
-    const start = c.req.query('path') || os.homedir();
+    const raw = c.req.query('path') || '';
+    // 我的电脑视图：默认起点 + 盘符根向上的终点
+    if (!raw || raw === DRIVES_TOKEN) {
+      return c.json({ ok: true, path: DRIVES_TOKEN, parent: null, entries: listDrives() });
+    }
+    const start = path.resolve(String(raw));
     if (!fs.existsSync(start)) return c.json({ ok: false, error: '路径不存在' }, 400);
     try {
       const stat = fs.statSync(start);
@@ -723,7 +744,9 @@ export default function (app, ctx) {
           if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
           return a.name.localeCompare(b.name);
         });
-      return c.json({ ok: true, path: start, parent: path.dirname(start), entries });
+      // 上一级：普通目录 → dirname；Windows 盘符根 → 我的电脑（跨盘符）
+      const parent = isDriveRoot(start) ? DRIVES_TOKEN : path.dirname(start);
+      return c.json({ ok: true, path: start, parent, entries });
     } catch (e) {
       return c.json({ ok: false, error: e.message }, 500);
     }

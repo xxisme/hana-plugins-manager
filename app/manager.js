@@ -702,17 +702,27 @@
       file: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 1.5H4A1.5 1.5 0 0 0 2.5 3v10A1.5 1.5 0 0 0 4 14.5h8A1.5 1.5 0 0 0 13.5 13V5.5L9 1.5z"/><path d="M9 1.5V5h4"/></svg>',
     };
     let cur = '';
+    // 后端定义的「我的电脑」盘符列表视图 token（与 routes/api.js 保持一致）
+    const DRIVES_TOKEN = '__drives__';
     async function loadDir(path) {
       const r = await api('GET', '/api/browse?path=' + encodeURIComponent(path), undefined, { timeoutMs: 10000 });
       const crumb = $('browse-crumb'); const list = $('browse-list');
       if (!r || !r.ok) { list.innerHTML = '<div class="empty">' + esc((r && r.error) || '读取失败') + '</div>'; return; }
       cur = r.path;
-      crumb.textContent = r.path;
-      let html = `<div class="browse-item dir" data-path="${esc(r.parent || r.path)}">${BI.up} 上一级</div>`;
+      const atDrives = r.path === DRIVES_TOKEN;
+      // 我的电脑视图：面包屑显示「我的电脑」，且已到顶级，不显示「上一级」
+      crumb.textContent = atDrives ? '我的电脑' : r.path;
+      let html = '';
+      if (!atDrives && r.parent) {
+        html += `<div class="browse-item dir" data-path="${esc(r.parent)}">${BI.up} 上一级</div>`;
+      }
       for (const e of r.entries) {
         const isZip = e.isFile && /\.zip$/i.test(e.name);
         const sz = e.isFile && e.size ? fmtSize(e.size) : '';
-        if (e.isDir) html += `<div class="browse-item dir" data-path="${esc(r.path + '\\' + e.name)}">${BI.folder} ${esc(e.name)}</div>`;
+        if (atDrives) {
+          // 盘符条目：name 本身就是完整路径（如 C:\），直接作为跳转目标
+          html += `<div class="browse-item dir" data-path="${esc(e.name)}">${BI.folder} ${esc(e.name)}</div>`;
+        } else if (e.isDir) html += `<div class="browse-item dir" data-path="${esc(r.path + '\\' + e.name)}">${BI.folder} ${esc(e.name)}</div>`;
         else if (isZip) html += `<div class="browse-item file" data-pick="${esc(r.path + '\\' + e.name)}">${BI.zip} ${esc(e.name)} <span class="sz">${sz}</span></div>`;
         else if (e.isFile) html += `<div class="browse-item file" data-path="${esc(r.path + '\\' + e.name)}">${BI.file} ${esc(e.name)}</div>`;
       }
