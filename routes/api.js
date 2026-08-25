@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { getContext, resolveDataDir, currentHanaHome } from '../lib/plugin-context.js';
 import {
   listCandidates, getCurrentDshHome, setCurrentDshHome,
@@ -94,6 +95,7 @@ export default function (app, ctx) {
         pluginsDir: pluginsPath,
         pluginCount,
         platform: process.platform,
+        githubToken: { hasToken: !!gh.readGithubToken(dataDir), fromEnv: !!process.env.GITHUB_TOKEN },
       },
     };
     return { ...statusCache.data, _cache: { hit: false, age: 0 } };
@@ -167,6 +169,33 @@ export default function (app, ctx) {
 
   // ── status ─────────────────────────────
   app.get('/api/status', async (c) => c.json(await getStatus()));
+
+  // 安全打开本地目录（仅 HANA_HOME 及其子目录）
+  app.post('/api/open-path', async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const home = currentHome();
+    if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
+    const target = body && body.path ? String(body.path) : home;
+    const resolved = path.resolve(target);
+    if (resolved !== home && !resolved.startsWith(home + path.sep)) {
+      return c.json({ ok: false, error: '只能打开 Hana 主目录及其子目录' }, 400);
+    }
+    if (!fs.existsSync(resolved)) {
+      return c.json({ ok: false, error: '目录不存在' }, 400);
+    }
+    try {
+      let cmd, args;
+      if (process.platform === 'win32') { cmd = 'explorer'; args = [resolved]; }
+      else if (process.platform === 'darwin') { cmd = 'open'; args = [resolved]; }
+      else { cmd = 'xdg-open'; args = [resolved]; }
+      const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+      child.on('error', () => { /* ignore */ });
+      child.unref();
+      return c.json({ ok: true });
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
 
   // ── 插件列表 ───────────────────────────
   app.get('/api/plugins', async (c) => {
@@ -527,6 +556,19 @@ export default function (app, ctx) {
     try {
       const fsPlugins = scanPlugins(home).plugins || [];
       const r = await checkUpdates(fsPlugins, dataDir);
+      // 合并 sources:前端需要 github.url 渲染「打开仓库」按钮
+      const sources = readSources(dataDir);
+      const hasToken = !!gh.readGithubToken(dataDir);
+      for (const p of r.plugins) {
+        const src = sources[p.id];
+        if (src) p.github = { repo: src.repo, branch: src.branch, url: src.githubUrl };
+        // 友好化 404 错误信息:根据是否配置 token 给出不同提示
+        if (p.status === 'upstream-404') {
+          p.upstreamError = hasToken
+            ? 'GitHub 仓库或目录返回 404（仓库不存在或关联地址错误）'
+            : 'GitHub 仓库或目录返回 404（可能是私有仓库，请配置 GitHub Token 后重试）';
+        }
+      }
       const likelyRateLimited = r.plugins.length > 0
         && r.plugins.every((p) => p.status === 'check-failed' && (p.upstreamError || '').includes('限流'));
       UPDATE_CHECK_CACHE.set(cacheKey, { at: Date.now(), result: r, likelyRateLimited });

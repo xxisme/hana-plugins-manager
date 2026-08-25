@@ -250,3 +250,141 @@ HanaAgent-Plugins/
 - `scripts/smoke-test.mjs`：**68 项全通过**(本次未新增离线用例；端到端状态字段在路由/UI 层透传)。如需为状态机加单测，可对 `getRemoteVersion` 做基于 mock fetch 的覆盖。
 - lint 零报错。
 - 用户体验路径：现在看到"检测失败"或"仓库 404"或"无 version"时，一眼能区分是关联错了、还是仓库本身没版本信息；点"打开仓库"直接核实。
+
+---
+
+## 九、追加修订(2026-08-25)：404 误判修复 + 顶栏体验优化
+
+### 9.1 问题与修复
+
+#### (1) 误把"无 version"判定为"仓库 404"
+
+用户反馈：DSHana / Hanako Mail / SQLite 等真实插件在更新检测中**一直显示"仓库 404"**。
+
+根因：`getRemoteVersion` 之前把"根目录没有 manifest.json/package.json"的文件 404 当作仓库 404，但**文件 404 不等于仓库 404**——很多仓库的 manifest 只在子目录。
+
+修复：
+
+- **`lib/github.js`**
+  - 只有 **`listDir`(列目录 API)返回 404** 才判定为 `upstream-404`；文件级 404 仅意味着"该目录下无 version"。
+  - `findNestedVersion` 现在对顶层所有"看起来可包含插件"的子目录(剔除 node_modules/.git/docs/build/wiki 等 30+ 明显非插件目录)逐一尝试读 manifest/package.json(限 8 个候选)，NESTED_CANDIDATES 命中的优先，再补其他"通用"子目录。
+  - `getRemoteVersion` 失败状态严格分三类：
+    - `upstream-404` = **列目录 API 404**(仓库不存在/链接错误/无权限)
+    - `no-version` = 仓库可达但 version 字段缺失
+    - `check-failed` = 网络/限流等
+
+#### (2) 顶栏"连接中"歧义
+
+改为三态清晰：
+
+| 状态 | 文案 |
+|---|---|
+| status 未加载 | 连接中 |
+| server.ok = true | **已连接 · 端口 N** |
+| server.ok = false | 未连接 |
+
+#### (3) 顶栏"Hana 主目录 …" 改成"打开"按钮
+
+- 后端新增 **`POST /api/open-path`**：安全白名单(只允许打开 HANA_HOME 及其子目录)、平台适配(`explorer` / `open` / `xdg-open`)、`detached: true` 不阻塞宿主。
+- 前端：原 `…` 位置变为文本 `—`，**右侧新增文件夹图标按钮**，点击调用 `/api/open-path`；未配置主目录时按钮置灰。
+- 按钮可用态与 `STATE.status.hanaHome` 联动，主目录变化时自动更新 tooltip 与禁用态。
+
+### 9.2 验证
+
+- `scripts/smoke-test.mjs`：**68 项全通过**(离线用例未覆盖网络层；线上对真实仓库点击"重新检测"会得到更准确的状态)。
+- lint 零报错。
+
+---
+
+## 十、追加修订(2026-08-25)：404 带回 GitHub 关联 / 顶栏连接态 / 日志对错位
+
+### 10.1 更新 404 行带回"打开仓库"按钮
+
+根因：`/api/updates/check` 只透传了 `checkUpdates` 的结果，**没有把 `sources` 中的 GitHub 关联信息带回来**，导致前端 `p.github` 始终为 `undefined`，"打开仓库"按钮永远不出现，错误也缺乏具体仓库地址。
+
+修复：
+- **`routes/api.js` updates/check**：返回前从 `readSources(dataDir)` 合并 `github` 字段到每个 update 项，并对 `upstream-404` 错误信息追加具体关联 URL，便于用户一眼看到"我关联的是哪个地址"。
+
+### 10.2 顶栏连接态不再误导
+
+之前绿点只看 `server.ok`(能否读 server-info.json)，但**文件存在 ≠ Hana 服务可达**。现在改为：
+- `s` 未加载：`加载中`（绿点 off）
+- `s.server.ok` 失败：`未配置`（off）
+- `s.api` 成功：**`已连接 · 端口 N`**（绿点 on）
+- `s.api` 失败：`未连接 · 端口 N`（绿点 warn）
+
+文案 `加载中 / 未配置 / 已连接 / 未连接` 四态与绿点严格对齐。
+
+文案同步调整：
+- 路径标签：`Hana 主目录` → `Hana 插件文件夹`
+- 路径占位 `—` 删除：未配置时 hud-home 留空，"未配置"由"打开"按钮的禁用态和 tooltip 表达
+
+### 10.3 日志对错位
+
+新增独立 `<span class="st">` 放在日期后、动作前，显示 `✓`/`✕` 符号并按对错染色（成功绿/失败红），同时移除旧版 `msg::before` 叠加的"对错"前缀。日志行结构变为 `时间 · 对错 · 动作 · 消息`。
+
+### 10.4 验证
+
+- smoke-test **68 项全过**，lint 零报错
+- 现在更新页 404 行会出现：
+  - 错误信息：`GitHub 仓库或目录返回 404（仓库不存在、关联地址错误或私有仓库无权限）：https://github.com/xxx/yyy`
+  - 旁边一个**「打开仓库」**按钮：点开就是 GitHub 那个 URL，能直接看到 GitHub 是否真的 404
+  - 如果 404 是关联错了(填错 owner)，点「打开仓库」确认后到插件详情改关联
+
+---
+
+## 十一、追加修订(2026-08-25)：布局错位修复 + GitHub Token 配置入口
+
+### 11.1 布局错位
+
+之前错误信息把完整 GitHub URL 拼进去(`GitHub 仓库或目录返回 404 (...)：https://github.com/...`)，加上「打开仓库」按钮把状态列挤到「仓库 404」换行。
+
+修复：
+- 错误信息**不再拼接 URL**；URL 放在「打开仓库」按钮的 `title` 属性上（鼠标悬停可见）
+- 状态列 `min-width: 110px; white-space: nowrap;`，插件名列 `max-width: 200px` 截断
+- `.upd-err` 改为 flex 容器，错误文字、打开按钮、配置 Token 按钮一行排列，文字过长自动换行不挤压邻列
+
+### 11.2 GitHub Token 配置入口(解决"还是 404")
+
+观察发现用户关联的仓库多为 `xixsme/...`，匿名 API 对私有仓库返回 404。**配置 `GITHUB_TOKEN` 才能让前端的 "看起来 404" 真正消失**。此前后端有 `/api/github-token` 但前端无入口，是审计报告中"后端有 / 前端无"的典型。
+
+实现：
+- **`routes/api.js getStatus`**：返回 `githubToken: { hasToken, fromEnv }` 字段
+- **`routes/api.js updates/check`**：404 错误信息根据 token 状态给出不同文案
+  - 有 token：`仓库不存在或关联地址错误`
+  - 无 token：**`可能是私有仓库，请配置 GitHub Token 后重试`**
+- **`app/manager.js`**：
+  - 新增 `promptModal()` 通用输入框模态（密码输入、回车提交、ESC 取消）
+  - 新增 `openGithubTokenModal()`：读取当前 `masked` 状态作为提示，POST 保存后自动 `loadStatus` + `loadUpdates(true)`
+  - `renderUpdates` 错误行在**无 token 状态下**多出一个**「配置 Token」按钮**；点击触发 `openGithubTokenModal()`
+- **`app/manager.css`**：状态列最小宽度、插件名列截断、错误行 flex 容器
+
+### 11.3 验证
+
+- smoke-test **68 项全过**，lint 零报错
+- 用户体验：
+  - 错误行现在干净：`错误信息 [打开仓库] [配置 Token]` 三块水平排列，状态列稳定
+  - 「打开仓库」`title` 鼠标悬停看完整 GitHub URL
+  - 「配置 Token」点击弹模态输入 PAT（密码框不显示），保存后立即重新检测，私有仓库即可正常返回 version
+
+---
+
+## 十二、追加修订(2026-08-25)：备份「查看备份位置」真实打开 + 顶栏文案统一
+
+### 12.1 备份「查看备份位置」真实打开
+
+之前点击只 toast 文字提示路径，本轮改为复用 `/api/open-path` 真正调起系统资源管理器：
+- 优先用 `STATE.backups[0].dir` 推导到 `backups` 父目录（避开硬编码 plugin id）
+- 兜底从 `hanaHome + '/plugin-data/hana-plugins-manager/backups'` 拼出
+- 路径白名单保护（已位于 HANA_HOME 内的子目录）允许
+
+### 12.2 顶栏「打开」按钮 hint 统一
+
+- tooltip / 错误信息文案：`Hana 主目录` → **`Hana 插件文件夹`**
+- init HTML 的服务状态文字：`连接中` → **`加载中`**，脉冲同步加 `off` className，避免初始状态显示绿色脉冲+「连接中」的误导组合
+
+### 12.3 验证
+
+- smoke-test **68 项全过**，lint 零报错
+- 现在点「查看备份位置」会真实弹出资源管理器并定位到 `<HANA_HOME>/plugin-data/hana-plugins-manager/backups`，里面可以看到所有按时间戳命名的备份目录
+- 顶栏刷新瞬间看到「加载中 + 灰色脉冲」，status 加载完成后才会切换到 `已连接 / 未连接 / 未配置` 之一与对应颜色脉冲，不再误导

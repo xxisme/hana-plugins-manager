@@ -82,6 +82,61 @@
     const el = document.getElementById('loading');
     if (el) el.remove();
   }
+  /** 单输入框模态(用于 GitHub Token 等) */
+  function promptModal(title, label, placeholder = '', defaultValue = '') {
+    return new Promise((resolve) => {
+      const back = document.createElement('div');
+      back.className = 'modal-backdrop';
+      back.innerHTML = `
+        <div class="modal">
+          <h3>${esc(title)}</h3>
+          <div class="field" style="margin:14px 0">
+            <label>${esc(label)}</label>
+            <input class="input" id="prompt-modal-input" type="password" placeholder="${esc(placeholder)}" value="${esc(defaultValue)}">
+          </div>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" data-act="cancel">取消</button>
+            <button class="btn btn-primary" data-act="ok">保存</button>
+          </div>
+        </div>`;
+      document.body.appendChild(back);
+      requestAnimationFrame(() => { back.classList.add('show'); back.querySelector('#prompt-modal-input').focus(); });
+      const input = back.querySelector('#prompt-modal-input');
+      const close = (val) => {
+        back.classList.remove('show');
+        setTimeout(() => back.remove(), 200);
+        resolve(val);
+      };
+      back.addEventListener('click', (e) => {
+        if (e.target === back || e.target.dataset.act === 'cancel') close(null);
+        else if (e.target.dataset.act === 'ok') close(input.value);
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') close(input.value);
+        else if (e.key === 'Escape') close(null);
+      });
+    });
+  }
+
+  /** 配置 GitHub Personal Access Token(用于访问私有仓库与避免限流) */
+  async function openGithubTokenModal() {
+    const r0 = await api('GET', '/api/github-token/status');
+    const masked = r0 && r0.ok ? r0.masked : null;
+    const fromEnv = r0 && r0.ok && r0.fromEnv;
+    const hint = fromEnv
+      ? '当前：来自环境变量 GITHUB_TOKEN（前端无法修改）'
+      : (masked ? `当前：${masked}（留空不修改）` : '当前：未配置');
+    const token = await promptModal('配置 GitHub Token', `Personal Access Token（需 repo 权限）· ${hint}`, 'ghp_xxxxxxxxxxxxxxxxxxxx', '');
+    if (token === null) return;
+    if (!token.trim()) { toast('已取消', 'info'); return; }
+    const r = await api('POST', '/api/github-token', { token: token.trim() });
+    if (r && r.ok) {
+      toast('已保存 GitHub Token，正在重新检测', 'success');
+      loadStatus();
+      loadUpdates(true);
+    } else toast((r && r.error) || '保存失败', 'error');
+  }
+
   function modal(title, msg, { danger, confirmText } = {}) {
     return new Promise((resolve) => {
       const back = document.createElement('div');
@@ -159,19 +214,33 @@
   // ── 顶栏 ─────────────────────────────────
   function renderTopbar() {
     const s = STATE.status;
-    const home = s && s.hanaHome ? s.hanaHome : '未检测到主目录';
-    const server = s && s.server && s.server.ok ? `运行中 · 端口 ${s.server.port}` : '未连接';
+    const home = s && s.hanaHome ? s.hanaHome : '';
+    let serverText, serverPulseCls;
+    if (!s) {
+      serverText = '加载中';
+      serverPulseCls = 'off';
+    } else if (!s.server || !s.server.ok) {
+      serverText = '未配置';
+      serverPulseCls = 'off';
+    } else if (s.api) {
+      serverText = `已连接 · 端口 ${s.server.port}`;
+      serverPulseCls = '';
+    } else {
+      serverText = `未连接 · 端口 ${s.server.port}`;
+      serverPulseCls = 'warn';
+    }
     const count = (s && s.pluginCount != null) ? s.pluginCount : STATE.plugins.length;
     const homeEl = $('hud-home');
     if (homeEl) { homeEl.textContent = home; homeEl.title = home; }
     const serverEl = $('hud-server');
-    if (serverEl) serverEl.textContent = server;
+    if (serverEl) serverEl.textContent = serverText;
     const countEl = $('hud-count');
     if (countEl) countEl.textContent = count + ' 个插件';
     const pulseServer = $('pulse-server');
-    if (pulseServer) pulseServer.className = 'pulse ' + ((s && s.server && s.server.ok) ? '' : 'off');
+    if (pulseServer) pulseServer.className = 'pulse ' + serverPulseCls;
     const pulseApi = $('pulse-api');
     if (pulseApi) pulseApi.className = 'pulse ' + ((s && s.api) ? '' : (s && s.api === false ? 'warn' : 'off'));
+    updateOpenHomeBtn();
   }
 
   // ── Tab 切换 ─────────────────────────────
@@ -669,6 +738,15 @@
     if (btn) btn.disabled = sel === 0;
   }
 
+  /** 顶栏「打开 Hana 插件文件夹」按钮的可用态 */
+  function updateOpenHomeBtn() {
+    const btn = $('btn-open-home');
+    if (!btn) return;
+    const home = (STATE.status && STATE.status.hanaHome) || null;
+    btn.disabled = !home;
+    btn.title = home ? `打开 Hana 插件文件夹：${home}` : '未配置 Hana 插件文件夹';
+  }
+
   function renderUpdates() {
     const body = $('update-body');
     updateSelectSummary();
@@ -685,12 +763,16 @@
       const meta = STATUS_META[p.status] || { chipCls: '', label: p.status };
       const errStatus = p.status === 'check-failed' || p.status === 'upstream-404' || p.status === 'no-version';
       const ghLink = p.github && p.github.url
-        ? `<a class="upd-gh" href="${esc(p.github.url)}" target="_blank" rel="noopener" data-gh>打开仓库</a>`
+        ? `<a class="upd-gh" href="${esc(p.github.url)}" target="_blank" rel="noopener" title="${esc(p.github.url)}">打开仓库</a>`
+        : '';
+      const hasToken = !!(STATE.status && STATE.status.githubToken && STATE.status.githubToken.hasToken);
+      const tokenBtn = !hasToken
+        ? `<button class="upd-gh" data-cfg-token title="为私有仓库或限流场景配置 GitHub Token">配置 Token</button>`
         : '';
       const versionCell = p.hasUpdate
         ? `<span class="version-compare">${esc(p.localVersion || '?')} <span class="arrow">→</span> ${esc(p.remoteVersion || '?')}</span>`
         : (errStatus
-          ? `<span class="upd-err">${esc(p.upstreamError || p.error || '检测失败')} ${ghLink}</span>`
+          ? `<div class="upd-err">${esc(p.upstreamError || p.error || '检测失败')} ${ghLink} ${tokenBtn}</div>`
           : '<span class="version-compare">—</span>');
       const hasSource = p.status !== 'no-source';
       const selected = STATE.updateSel.has(p.id);
@@ -713,6 +795,10 @@
     // 仓库链接点击不触发行切换
     body.querySelectorAll('.upd-gh').forEach((a) => {
       a.addEventListener('click', (e) => e.stopPropagation());
+    });
+    // 「配置 Token」按钮：打开输入模态
+    body.querySelectorAll('[data-cfg-token]').forEach((b) => {
+      b.addEventListener('click', (e) => { e.stopPropagation(); openGithubTokenModal(); });
     });
     // 点击行（含勾选方块）切换选择
     body.querySelectorAll('.upd-row.selectable').forEach((row) => {
@@ -812,6 +898,7 @@
       const msg = [l.pluginId || l.pluginName || '', l.error || ''].filter(Boolean).join(' · ') || 'ok';
       return `<div class="log-entry ${isErr ? 'err' : 'ok'}">
         <span class="ts">${esc(fmtDate(l.ts))}</span>
+        <span class="st">${isErr ? '✕' : '✓'}</span>
         <span class="act">${esc(act)}</span>
         <span class="msg">${esc(msg)}</span>
       </div>`;
@@ -828,14 +915,19 @@
           <div><h1>小花插件管理</h1></div>
         </div>
         <div class="rt">
-          <span class="hud-item"><span class="pulse" id="pulse-server"></span> <b id="hud-server">连接中…</b></span>
+          <span class="hud-item"><span class="pulse off" id="pulse-server"></span> <b id="hud-server">加载中</b></span>
           <span class="hud-item"><span class="pulse" id="pulse-api"></span> <b id="hud-count">—</b></span>
         </div>
       </div>
       <div class="path-bar glass">
         <div class="path-info">
-          <span class="path-label">Hana 主目录</span>
-          <span class="path-value" id="hud-home" title="">…</span>
+          <span class="path-label">Hana 插件文件夹</span>
+          <span class="path-value" id="hud-home" title=""></span>
+          <button class="btn-open-home" id="btn-open-home" title="打开 Hana 主目录" aria-label="打开 Hana 主目录">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2l1 1.5h6A1.5 1.5 0 0 1 14 6v6.5A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5v-8z"/>
+            </svg>
+          </button>
         </div>
         <div class="tabs">
           <button class="tab active" data-view="manage">插件管理<span class="badge" id="tab-count"></span></button>
@@ -953,13 +1045,37 @@
       if (r && r.ok) { toast('备份成功', 'success'); loadBackups(); }
       else toast((r && r.error) || '备份失败', 'error');
     };
-    $('btn-restore-open').onclick = () => {
-      toast('备份保存在 Hana 主目录下：plugin-data/hana-plugins-manager/backups/plugins', 'info');
+    $('btn-restore-open').onclick = async () => {
+      // 优先用第一份备份的 dir 推导 backups 父目录(避开硬编码 plugin id)
+      let target = null;
+      if (STATE.backups && STATE.backups.length > 0 && STATE.backups[0].dir) {
+        // dir 形如 <HANA_HOME>/plugin-data/<pluginId>/backups/plugins/<ts>
+        // 想要 <HANA_HOME>/plugin-data/<pluginId>/backups
+        target = STATE.backups[0].dir.replace(/[/\\][^/\\]+[/\\][^/\\]+$/, '');
+      }
+      if (!target && STATE.status && STATE.status.hanaHome) {
+        target = STATE.status.hanaHome + '/plugin-data/hana-plugins-manager/backups';
+      }
+      if (!target) { toast('无法确定备份目录：未配置 Hana 主目录', 'error'); return; }
+      const r = await api('POST', '/api/open-path', { path: target });
+      if (r && r.ok) toast('已尝试打开备份目录', 'success');
+      else toast((r && r.error) || '打开失败', 'error');
     };
 
     // 绑定安装向导动作
     bindGithubActions();
     bindLocalActions();
+
+    // 顶栏「打开 Hana 插件文件夹」按钮
+    const btnOpenHome = $('btn-open-home');
+    if (btnOpenHome) {
+      btnOpenHome.onclick = async () => {
+        const home = (STATE.status && STATE.status.hanaHome) || null;
+        const r = await api('POST', '/api/open-path', { path: home });
+        if (r && r.ok) toast('已尝试打开 Hana 插件文件夹', 'success');
+        else toast((r && r.error) || '打开失败', 'error');
+      };
+    }
 
     // 初始加载
     loadStatus();

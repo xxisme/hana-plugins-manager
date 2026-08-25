@@ -107,6 +107,15 @@ html, body {
   max-width: min(520px, 60vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--text);
 }
+.btn-open-home {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 8px; border: var(--border);
+  background: var(--bg-card); color: var(--ink-soft); cursor: pointer;
+  transition: all var(--transition); box-shadow: var(--shadow-sm); flex-shrink: 0;
+}
+.btn-open-home:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); }
+.btn-open-home svg { width: 14px; height: 14px; }
+.btn-open-home:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 /* path-bar 内的 Tab：透明背景融入玻璃条，避免双重卡片 */
 .path-bar .tabs { background: transparent; border: none; box-shadow: none; padding: 0; gap: 4px; }
 .path-bar .tab.active { box-shadow: var(--shadow-sm); }
@@ -288,6 +297,8 @@ html, body {
 .update-table { width: 100%; border-collapse: collapse; background: var(--bg-card); border: var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-sm); }
 .update-table th, .update-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); font-size: 12.5px; }
 .update-table th { background: rgba(44, 62, 80, 0.05); color: var(--text-2); font-weight: 600; }
+.update-table th:last-child, .update-table td:last-child { min-width: 110px; white-space: nowrap; }
+.update-table td:nth-child(2) { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .update-table tr:last-child td { border-bottom: none; }
 .update-table tr:hover td { background: rgba(44, 62, 80, 0.03); }
 /* 更新表格行选择 */
@@ -309,7 +320,8 @@ html, body {
 .status-chip.failed { background: rgba(176, 77, 69, 0.10); color: var(--err); }
 .status-chip.upstream-404 { background: rgba(176, 77, 69, 0.10); color: var(--err); }
 .status-chip.no-version { background: rgba(166, 123, 63, 0.10); color: var(--warn); }
-.upd-err { font-size: 11.5px; color: var(--text-2); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.upd-err { font-size: 11.5px; color: var(--text-2); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.5; }
+.upd-err .upd-gh { flex-shrink: 0; }
 .upd-gh {
   font-size: 11px; padding: 2px 8px; border-radius: 6px;
   background: var(--bg-card); border: 1px solid var(--line-strong);
@@ -334,10 +346,11 @@ html, body {
 .log-entry { display: flex; gap: 10px; padding: 7px 10px; border-radius: 8px; font-size: 12px; align-items: flex-start; }
 .log-entry:nth-child(odd) { background: rgba(255,255,255,0.5); }
 .log-entry .ts { color: var(--text-2); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.log-entry .st { font-weight: 700; flex-shrink: 0; font-size: 12px; width: 12px; text-align: center; }
+.log-entry.ok .st { color: var(--ok); }
+.log-entry.err .st { color: var(--err); }
 .log-entry .act { color: var(--ink); font-weight: 500; flex-shrink: 0; }
 .log-entry .msg { color: var(--text); word-break: break-all; }
-.log-entry.ok .msg::before { content: "✓ "; color: var(--ok); }
-.log-entry.err .msg::before { content: "✕ "; color: var(--err); }
 
 /* ── 详情抽屉 ────────────────────────── */
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(33, 45, 58, 0.32); backdrop-filter: blur(3px); z-index: 60; opacity: 0; transition: opacity 240ms ease; }
