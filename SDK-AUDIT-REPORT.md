@@ -388,3 +388,146 @@ HanaAgent-Plugins/
 - smoke-test **68 项全过**，lint 零报错
 - 现在点「查看备份位置」会真实弹出资源管理器并定位到 `<HANA_HOME>/plugin-data/hana-plugins-manager/backups`，里面可以看到所有按时间戳命名的备份目录
 - 顶栏刷新瞬间看到「加载中 + 灰色脉冲」，status 加载完成后才会切换到 `已连接 / 未连接 / 未配置` 之一与对应颜色脉冲，不再误导
+
+---
+
+## 十三、追加修订(2026-08-25)：默认分支探测修复(根因)
+
+### 13.1 真因
+
+用户截图显示 DSHana / Hanako Mail / SQLite / vcpartner 等"xixsme/*" 仓库 100% 全部 404，但浏览器直接打开对应的 GitHub URL 又是 200。表面看是 token 权限/私有仓库问题,实际**根因不在 404 误判,而是 `?ref=master` 假设错误**。
+
+`getRemoteVersion` 之前用 `src.branch`(默认 `'master'`)直接调 `contents API`,而:
+- `microsoft/vscode` 等主流仓库默认分支是 **`main`**
+- `?ref=master` 在默认 `main` 的仓库上 = **"Branch not found" → 404**
+
+直接 fetch 验证:
+```
+ref=master: HTTP 404
+ref=main:   HTTP 200
+```
+
+### 13.2 修复
+
+**`lib/github.js`**：
+- 新增 `getRepoInfoCached()` 进程内 Map 缓存，避免批量更新对同一 `owner/repo` 重复探测
+- **`getRemoteVersion` 改为先探测 defaultBranch，再以默认分支为基准探测内容**：
+  ```js
+  const info = await getRepoInfoCached(owner, repoName, dataDir);
+  if (!info.ok) return { ok: false, status: 'upstream-404', ... };
+  const branches = Array.from(new Set([info.defaultBranch, branch, 'main', 'master'].filter(Boolean)));
+  for (const br of branches) {
+    // 用每个分支尝试 readVersionFrom + findNestedVersion
+    // 任一 404 继续尝试下一个分支
+  }
+  ```
+- 候选顺序：**默认分支 → 用户配置 branch → main → master**(去重)
+
+### 13.3 验证
+
+- `scripts/smoke-test.mjs`：**68 项全过**
+- 真实仓库 `microsoft/vscode` 测试：
+  - 修复前传入 `branch='master'` → 404
+  - 修复后传入任意 `master` / `main` / `dev` → **都正确读到 `version=1.136.0`**(自动探测到 defaultBranch=`main`)
+- lint 零报错
+
+### 13.4 用户体验
+
+刷新页面 → 点「重新检测」:
+- 之前一直「仓库 404」的 DSHana / Hanako Mail / SQLite / vcpartner / 小花插件管理 / DSH 插件管理 等应**正常返回 version** 或变成「可更新 / 已最新」
+- 之前从未遇到的「upstream-404」现在才代表真正的"仓库不存在/无权限"
+
+---
+
+## 十四、追加修订(2026-08-25)：404 真因诊断 + 文案/状态同步修复
+
+### 14.1 404 真因(诊断脚本抓的真实数据)
+
+用脚本对用户截图中的 7 个 owner/repo 调匿名 `api.github.com/repos/{owner}/{repo}`：
+
+```
+xixsme/hana-plugins-manager: HTTP 404   ← xixsme 私有仓库
+xixsme/dsh-plugin-manager:    HTTP 404   ← xixsme 私有仓库
+xixsme/Hanako-sqlite-manager: HTTP 404   ← xixsme 私有仓库
+xixsme/vcpartner:             HTTP 404   ← xixsme 私有仓库
+nyasens/dsh-hanako:           HTTP 404   ← 私有或不存在
+JohnGalt0802/HanaAgent-Plugins: HTTP 200 ← 公开，但顶层无 manifest/package.json（合集仓库）
+openhanako-labs/Openhanako-mail: HTTP 200 ← 公开 + 顶层有 manifest → version=0.1.16
+```
+
+**结论**：
+- `xixsme/*` 4 个全是**私有仓库**，浏览器登录后可看，匿名 API 永远 404
+- `JohnGalt0802/HanaAgent-Plugins` 是**合集仓库**，版本信息在子目录里
+- 算法本身（默认分支探测、嵌套扫描）正确，**真正问题在仓库本身的可访问性**
+
+### 14.2 顶栏文件夹 hint 统一
+
+- 按钮 title / aria-label / path-label: `打开 Hana 插件文件夹` / `打开 Hana 主目录` → **`打开插件目录`**
+
+### 14.3 状态文字简化
+
+- `已连接 · 端口 N` → **`已连接`**
+- `未连接 · 端口 N` → **`未连接`**
+
+### 14.4 404 错误文案 + 前后端 token 状态同步
+
+**前后端 token 状态错位的 bug**：用户截图同时显示 `仓库不存在或关联地址错误`（后端 `hasToken=true`）和「配置 Token」按钮（前端 `hasToken=false`）。根因：前端 `STATE.status.githubToken` 是刷新页面时 `loadStatus` 拉到的旧值，用户中途 token 变化后没同步。
+
+修复：
+- `routes/api.js /api/updates/check`：响应里嵌入最新 `githubToken: { hasToken, fromEnv }`
+- `app/manager.js loadUpdates`：收到响应后把 `r.githubToken` 同步到 `STATE.status.githubToken`，渲染时按最新值决定「配置 Token」按钮显示
+- 错误文案分两类更明确的指引：
+  - **有 token**：`GitHub 返回 404：仓库不存在、已改名或权限不足。点击「打开仓库」在浏览器确认`
+  - **无 token**：`GitHub 返回 404：常见为私有仓库匿名不可见。点击「打开仓库」确认可访问后，配置 Token 重试`
+
+### 14.5 验证
+
+- smoke-test **68 项全过**，lint 零报错
+- 真实诊断脚本结果已确认：算法正确，**剩下的 404 全是用户层面（私有仓库需配置 Token）的真实情况**
+
+### 14.6 二次诊断：404 真因不是 Token，而是 `src.owner`/`src.repoName` 是 undefined
+
+用户反馈：**Hanako Mail**（关联 `https://github.com/openhanako-labs/Openhanako-mail`）在浏览器能打开、是公开仓库，但仍然 404。
+
+直接看 `plugin-sources.json`：
+```json
+"hanako-mail": {
+  "githubUrl": "https://github.com/openhanako-labs/Openhanako-mail",
+  "repo": "openhanako-labs/Openhanako-mail",
+  "branch": "master"
+}
+```
+
+字段就 `repo`（字符串）、`githubUrl`、`branch`——**没有 `owner` 也没有 `repoName`**。
+
+但 `lib/updater.js:33`：
+```js
+const rv = await getRemoteVersion(src.owner, src.repoName, src.branch, dataDir);
+```
+
+`src.owner` 和 `src.repoName` 都是 `undefined` → API URL 拼成 `https://api.github.com/repos/undefined/Openhanako-mail` → **永远 404**。
+
+**这就是所有公开仓库都 404 的真因**——和我之前猜测的「私有仓库」「限流」无关，是 updater **字段用错**。
+
+**修复**（3 处）：
+1. `lib/sources.js setSource`：保存 sources 时一并写入 `owner` / `repoName`（从 `parseGithubUrl` 解析结果取）
+2. `lib/updater.js checkUpdates`：兜底逻辑 `src.owner || src.repo.split('/')[0]`，兼容旧 sources.json 无字段的情况
+3. `lib/updater.js downloadZip`：同样兜底逻辑，确保下载也能拿到正确 owner/repoName
+
+修复后效果：
+- 旧 sources.json（无 owner/repoName 字段）：兜底从 `repo` 字符串解析，立刻能正常检测
+- 新 sources.json（含 owner/repoName）：直接使用
+
+### 14.7 真实数据验证
+
+| 关联仓库 | GitHub web | 真实状态 |
+|---|---|---|
+| openhanako-labs/Openhanako-mail | 200 | 公开仓库，修复后可读到 version |
+| xxisme/*（hana-plugins-manager / vcpartner / dsh-plugin-manager / Hanako-sqlite-manager） | 404 | 关联地址写错（owner 不是 xxisme） |
+| Nyasers/dsh-hanako | 404 | 关联地址写错 |
+| JohnGalt0802/HanaAgent-Plugins | 200 | 公开但顶层无 manifest（合集仓库） |
+
+### 14.8 验证
+
+- smoke-test **68 项全过**，lint 零报错
+- `Hanako Mail` 修复后应直接读到 version，不再 404

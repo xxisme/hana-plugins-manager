@@ -559,20 +559,24 @@ export default function (app, ctx) {
       // 合并 sources:前端需要 github.url 渲染「打开仓库」按钮
       const sources = readSources(dataDir);
       const hasToken = !!gh.readGithubToken(dataDir);
+      const fromEnv = !!process.env.GITHUB_TOKEN;
       for (const p of r.plugins) {
         const src = sources[p.id];
         if (src) p.github = { repo: src.repo, branch: src.branch, url: src.githubUrl };
-        // 友好化 404 错误信息:根据是否配置 token 给出不同提示
+        // 友好化 404 错误信息：分三类给出可执行建议
         if (p.status === 'upstream-404') {
-          p.upstreamError = hasToken
-            ? 'GitHub 仓库或目录返回 404（仓库不存在或关联地址错误）'
-            : 'GitHub 仓库或目录返回 404（可能是私有仓库，请配置 GitHub Token 后重试）';
+          if (hasToken) {
+            p.upstreamError = 'GitHub 返回 404：仓库不存在、已改名或权限不足。点击「打开仓库」在浏览器确认';
+          } else {
+            p.upstreamError = 'GitHub 返回 404：常见为私有仓库匿名不可见。点击「打开仓库」确认可访问后，配置 Token 重试';
+          }
         }
       }
       const likelyRateLimited = r.plugins.length > 0
         && r.plugins.every((p) => p.status === 'check-failed' && (p.upstreamError || '').includes('限流'));
       UPDATE_CHECK_CACHE.set(cacheKey, { at: Date.now(), result: r, likelyRateLimited });
-      return c.json({ ok: true, ...r });
+      // 嵌入最新 githubToken 状态，前端据此渲染「配置 Token」按钮，避免 UI 滞后
+      return c.json({ ok: true, ...r, githubToken: { hasToken, fromEnv } });
     } catch (e) {
       return c.json({ ok: false, error: e.message }, 500);
     }

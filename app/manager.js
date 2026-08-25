@@ -223,10 +223,10 @@
       serverText = '未配置';
       serverPulseCls = 'off';
     } else if (s.api) {
-      serverText = `已连接 · 端口 ${s.server.port}`;
+      serverText = `已连接`;
       serverPulseCls = '';
     } else {
-      serverText = `未连接 · 端口 ${s.server.port}`;
+      serverText = `未连接`;
       serverPulseCls = 'warn';
     }
     const count = (s && s.pluginCount != null) ? s.pluginCount : STATE.plugins.length;
@@ -718,6 +718,8 @@
       return;
     }
     STATE.updates = r.plugins || [];
+    // 同步后端最新 token 状态(避免前后端不一致导致「配置 Token」按钮错位)
+    if (r.githubToken && STATE.status) STATE.status.githubToken = r.githubToken;
     STATE.updateSel = new Set(STATE.updates.filter((p) => p.hasUpdate).map((p) => p.id));
     renderUpdates();
     const updatable = STATE.updates.filter((p) => p.hasUpdate).length;
@@ -923,7 +925,7 @@
         <div class="path-info">
           <span class="path-label">Hana 插件文件夹</span>
           <span class="path-value" id="hud-home" title=""></span>
-          <button class="btn-open-home" id="btn-open-home" title="打开 Hana 主目录" aria-label="打开 Hana 主目录">
+          <button class="btn-open-home" id="btn-open-home" title="打开插件目录" aria-label="打开插件目录">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2l1 1.5h6A1.5 1.5 0 0 1 14 6v6.5A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5v-8z"/>
             </svg>
@@ -1066,7 +1068,7 @@
     bindGithubActions();
     bindLocalActions();
 
-    // 顶栏「打开 Hana 插件文件夹」按钮
+    // 顶栏「打开插件目录」按钮
     const btnOpenHome = $('btn-open-home');
     if (btnOpenHome) {
       btnOpenHome.onclick = async () => {
