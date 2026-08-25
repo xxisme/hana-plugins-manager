@@ -892,7 +892,7 @@
       el.onclick = async () => {
         const dir = el.dataset.note;
         const cur = ((STATE.backups.find((b) => b.dir === dir) || {}).meta || {}).note || '';
-        const note = await promptModal('修改备份备注', { defaultValue: cur, placeholder: '输入备注，保存后显示在备份卡片上' });
+        const note = await promptModal('修改备份备注', { defaultValue: cur, placeholder: '输入备注，保存后显示在备份卡片上', type: 'text' });
         if (note === null) return;
         const r = await api('POST', '/api/backup/note', { backupDir: dir, note });
         if (r && r.ok) { toast('已更新备注', 'success'); loadBackups(); }
