@@ -617,7 +617,10 @@ export default function (app, ctx) {
     try {
       const prep = await prepareUpdate(id, dataDir);
       if (!prep.ok) return c.json({ ok: false, error: prep.error }, 400);
-      const installed = await hanaApi.installFromPath(home, prep.pluginRoot, { allowDowngrade });
+      // 定位实际安装根：prep.pluginRoot（prepareUpdate 显式返回）兜底 prep.check.pluginRoot
+      const installTarget = prep.pluginRoot || (prep.check && prep.check.pluginRoot);
+      if (!installTarget) return c.json({ ok: false, error: '未定位到插件根目录' }, 400);
+      const installed = await hanaApi.installFromPath(home, installTarget, { allowDowngrade });
       // 清理 staging
       try { prep.check.cleanup(); } catch { /* ignore */ }
       try { fs.rmSync(prep.zipPath, { force: true }); } catch { /* ignore */ }

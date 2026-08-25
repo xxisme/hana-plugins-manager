@@ -1067,7 +1067,8 @@
     $('btn-refresh').onclick = () => loadPlugins();
     document.querySelector('[data-go-install]').onclick = () => switchView('install');
     // 更新页按钮
-    $('btn-recheck').onclick = () => loadUpdates();
+    // 重新检测必须 force=true：否则命中后端 5min 更新缓存,点击不会有实际检测动作
+    $('btn-recheck').onclick = () => loadUpdates(true);
     $('btn-select-all').onclick = () => {
       // 全选：勾选所有可勾选(已关联 source)的插件
       STATE.updateSel = new Set(STATE.updates.filter((p) => p.status !== 'no-source').map((p) => p.id));
