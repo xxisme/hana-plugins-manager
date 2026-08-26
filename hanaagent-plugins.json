@@ -1,90 +1,86 @@
 {
-  "version": "1.0.0",
-  "lastUpdated": "2026-08-25T20:30:00+08:00",
+  "version": "1.1.0",
+  "lastUpdated": "2026-08-26T09:58:00+08:00",
   "projects": [
     {
       "github": "https://github.com/Nyasers/dsh-hanako",
-      "description": "把 DeepSeek Harness（dsh）接进 Hana 作为进程外 subagent 任务执行器。任务走 dsh web host，DSHana 标签页内嵌在 Hana 顶部，账本与依赖锁进插件数据目录；账密与模型由宿主 provider-catalog/models.json 注入，开箱即用。"
+      "description": "把 DeepSeek Harness（DSH）接进 Hana 作为进程外 subagent；以 DSHana 标签页内嵌 dsh 官方 Web UI，账本与依赖锁进插件数据目录。",
+      "stars": 38
     },
     {
       "github": "https://github.com/Nyasers/hana-remote-dev",
-      "description": "Hana 远程开发插件：通过 SSH 连接远程服务器，读写远程文件、执行远程命令、维持交互式 tty 会话。连接按需建立、用完即放，凭据加密落库，会话记录与连接事件按日落盘可审计。"
-    },
-    {
-      "github": "https://github.com/KhalilYamber/dsh-envoy",
-      "description": "DSH Envoy（dsh-bridge）：把 coding 任务外包给本机 DeepSeek Harness 的桥接插件。审批同步回 Hana 对话内决策，结果以原生卡片带回，支持外接（直连已有 DSH）与内置（官方 SDK runtime）两种运行模式。"
+      "description": "让 Hanako 通过 SSH 连接远程服务器：读写远程文件、执行远程命令、维持交互式会话；连接按需建立、用完即放，配置与日志全本地化。",
+      "stars": 7
     },
     {
       "github": "https://github.com/moononnn/hanabrew",
-      "description": "花酿：把 SillyTavern 1.18.0 完整跑进 HanaAgent，Edge 独立窗口提供酒馆体验。同时暴露 agent 工具（tavern-list/load/save/import/chat 等）让助手直接读写 ST 数据，配 hanabrew-card-testing skill 闭环写卡测卡。"
+      "description": "SillyTavern 1.18.0 与 HanaAgent 整合的本地一体化方案，把 Tavern 角色对话能力接到 Hana 桌面端。",
+      "stars": 6
     },
     {
       "github": "https://github.com/moononnn/hanako-biaoqingbao",
-      "description": "表情包插件：让 HanaAgent 的助手在回复中代入表情包，丰富对话情绪表达。"
-    },
-    {
-      "github": "https://github.com/moononnn/hanako-jieyuhua",
-      "description": "推荐回复插件：根据上下文生成几个候选回复内容，方便用户挑选合适的措辞。"
-    },
-    {
-      "github": "https://github.com/moononnn/xianbuzhu",
-      "description": "闲不住：HanaAgent 互动插件，任务空闲时和助手做小型互动，给安静对话加点调味。"
+      "description": "一个可以让 HanaAgent 中的助手们在回复中代入表情包的插件。",
+      "stars": 4
     },
     {
       "github": "https://github.com/moononnn/zaiganma",
-      "description": "屏幕弹幕插件：基于本机屏幕画面生成相应弹幕，让 HanaAgent 像视频网站一样在屏幕上飘字。Python 实现。"
+      "description": "一个 OpenHanako 的插件，可以根据你的电脑屏幕内容生成相应的弹幕。",
+      "stars": 3
     },
     {
       "github": "https://github.com/openhanako-labs/openhanako-audio-player",
-      "description": "侧边栏常驻音频播放器：本地音乐 / 在线流（网易云、QQ 双源）/ 场景调度 / Bus 编排，深色玻璃主题，可与 TTS Bus 联动。"
+      "description": "HanaAgent 音频播放器插件。侧边栏常驻播放器，支持本地音乐、在线流（Meting 搜索）、场景调度与 Bus 编排，含深色/亮色玻璃主题。",
+      "stars": 1
     },
     {
       "github": "https://github.com/moononnn/Hanako-tigexing",
-      "description": "任务完成提醒插件：在小花完成任务时弹窗通知，支持多种内容风格与自定义提示音效。"
+      "description": "一个在小花完成任务时弹窗提醒的插件，有不同的内容风格，还可以自定义提示音效。",
+      "stars": 1
     },
     {
       "github": "https://github.com/X-J-S-C/openmontage-studio",
-      "description": "OpenMontage Studio：视频全流程流水线工作台插件。编、导、制三工位同屏协作，管线驱动的工序状态机、工件库、两级验收门（必修/建议），一键投递桌面工作台预览。"
+      "description": "视频全流程流水线工作台（HanaAgent / OpenHanako 插件）：编导制三工位同屏协作、管线驱动的工序状态机、工件库与两级验收门（含角色鉴权），一键投递桌面端工作台预览。",
+      "stars": 1
     },
     {
-      "github": "https://github.com/KhalilYamber/hanako-side-chat",
-      "description": "HanaAgent（OpenHanako）侧边栏辅助对话插件：纯 LLM 问答面板，上下文自动跟随主对话，支持多会话/模型切换/供应商导入。"
+      "github": "https://github.com/moononnn/hanako-jieyuhua",
+      "description": "帮你生成几个推荐回复内容的插件。",
+      "stars": 0
     },
     {
-      "github": "https://github.com/Alex0921001/neo-project-manage",
-      "description": "Hana 项目管理插件：项目维度的任务/进度跟踪视图（Vue 实现）。"
-    },
-    {
-      "github": "https://github.com/TheEarlyWinter/subagent-model-picker",
-      "description": "子代理模型选择与分流插件：根据任务偏好路由到不同模型，支持多 Agent 协同分发。"
-    },
-    {
-      "github": "https://github.com/Nyasers/rules-injector",
-      "description": "Rules injector：把自定义规则注入到 OpenHanako 上下文，影响助手行为。"
+      "github": "https://github.com/xxisme/hana-plugins-manager",
+      "description": "小花 HanaAgent 插件管理器（UI 页面 + agent tool），统一管理本地插件的安装、启用、停用与配置。",
+      "stars": 0
     },
     {
       "github": "https://github.com/openhanako-labs/Openhanako-mail",
-      "description": "OpenHanako 邮件功能插件：在 HanaAgent 内收发邮件，集成会话上下文。"
+      "description": "HanaAgent 原生多邮箱聚合插件，支持 ClawEmail、AgentQQ 官方 API，以及个人邮箱 IMAP/SMTP；提供账号管理、邮件收发与桌面通知。",
+      "stars": 0
+    },
+    {
+      "github": "https://github.com/Nyasers/rules-injector",
+      "description": "规则注入器：会话创建时把内置规则通过宿主 deferred 通道以隐藏消息注入会话历史，模型后续每轮都能看到规则，界面不显示正文。",
+      "stars": 0
+    },
+    {
+      "github": "https://github.com/Alex0921001/neo-project-manage",
+      "description": "面向 Agent 与用户的项目与任务管理工具。支持项目集/项目/树形任务/便利贴/方案/需求/任务日历/周报/全文检索，75 个 agent 工具覆盖项目全闭环。",
+      "stars": 0
+    },
+    {
+      "github": "https://github.com/TheEarlyWinter/subagent-model-picker",
+      "description": "HanaAgent 子代理模型选择与分流插件：支持模型偏好路由与多 Agent 协同分发。",
+      "stars": 0
     },
     {
       "github": "https://github.com/xxisme/Hanako-sqlite-manager",
-      "description": "轻量 SQLite 数据库查看与管理 Hana 插件：UI 页面 + agent tool 双形态。"
-    },
-    {
-      "github": "https://github.com/JohnGalt0802/HanaAgent-Plugins/tree/main/plugins/ns-new-session",
-      "description": "ns-new-session：`/ns` 快捷命令插件，新建桌面级 Hana 会话，弥补移动端 `/new` 不能创建桌面会话的限制。"
-    },
-    {
-      "github": "https://github.com/JohnGalt0802/HanaAgent-Plugins/tree/main/plugins/download-progress",
-      "description": "Hana Download Manager（曾用名 download-progress）：下载管理器插件，可观测下载、守望循环、双窗降速警报、取消来源溯源、跨回合 deferred 门铃、跨会话管理器。"
-    },
-    {
-      "github": "https://github.com/JohnGalt0802/HanaAgent-Plugins/tree/main/plugins/easymodel-viewer",
-      "description": "easymodel-viewer：3D 模型查看器插件，支持 STL/OBJ/PLY/GLB/GLTF/3MF/STEP/IGES 多格式。contributes.cards 架构，自动转盘/换肤/线框/网格/视角切换。"
+      "description": "轻量 SQLite 数据库查看与管理 Hana 插件（UI 页面 + agent tool）。",
+      "stars": 0
     },
     {
       "github": "https://github.com/moononnn/xieyihui",
-      "description": "休息提醒插件：让你的小花定时提醒休息。支持强制模式——她会跟你斗智斗勇，颇有互动趣味。"
+      "description": "让你的小花提醒你到点休息的小插件。（强制模式下去跟她斗智斗勇吧！）",
+      "stars": 0
     }
   ]
 }
