@@ -463,6 +463,7 @@ html, body {
 .cand-item.selected { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(194, 91, 79, 0.12); }
 .cand-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .cand-meta { font-size: 11.5px; color: var(--text-2); margin-top: 2px; }
+.cand-warn { color: var(--err); font-weight: 600; }
 
 /* ── 更新页 Token 状态提示条 ────────────────── */
 .token-banner {

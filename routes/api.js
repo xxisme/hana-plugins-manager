@@ -585,6 +585,11 @@ export default function (app, ctx) {
 
   // ── 安装：GitHub 应用（下载+风险检测）──
   // 返回 staged 信息 + 风险报告；前端确认后调用 /api/install/confirm 实际安装
+  /** 从 release 资产里挑选最合适的 zip：优先文件名含 repoName，其次第一个 */
+  function pickReleaseAsset(assets, repoName) {
+    const n = String(repoName || '').toLowerCase();
+    return assets.find((a) => String(a.name || '').toLowerCase().includes(n)) || assets[0] || null;
+  }
   app.post('/api/install/github-apply', async (c) => {
     const { url } = await c.req.json();
     if (!url) return c.json({ ok: false, error: 'url 必填' }, 400);
@@ -596,11 +601,37 @@ export default function (app, ctx) {
 
       const workRoot = path.join(dataDir, 'tmp');
       fs.mkdirSync(workRoot, { recursive: true });
-      const zipPath = path.join(workRoot, `${info.repoName}-${Date.now()}.zip`);
-      const dl = await gh.downloadRepoZip(info.owner, info.repoName, info.defaultBranch, zipPath, dataDir);
-      if (!dl.ok) return c.json({ ok: false, error: dl.error }, 400);
 
-      const check = checkLocalSource(zipPath, workRoot);
+      // 安装来源：优先 Release 发布包（作者交付的构建产物），无可用 zip 资产再回退源码 zip。
+      // Release 包若结构校验失败（套目录/合集/非插件包等）同样回退源码——Release 是软优先，不阻塞安装。
+      let source = 'source';
+      let zipPath = null;
+      let check = null;
+      const rel = await gh.getLatestRelease(info.owner, info.repoName, dataDir);
+      if (rel.ok && Array.isArray(rel.assets) && rel.assets.length) {
+        const asset = pickReleaseAsset(rel.assets, info.repoName);
+        const relZip = path.join(workRoot, `release-${info.repoName}-${Date.now()}.zip`);
+        const dlRel = await gh.downloadReleaseAsset(asset, relZip, dataDir);
+        if (dlRel.ok) {
+          const ck = checkLocalSource(relZip, workRoot);
+          if (ck.ok) {
+            source = 'release';
+            zipPath = relZip;
+            check = ck;
+          } else {
+            // Release 包结构不可用：清理临时产物后走源码回退
+            try { ck.cleanup(); } catch { /* ignore */ }
+            try { fs.rmSync(relZip, { force: true }); } catch { /* ignore */ }
+          }
+        }
+      }
+      if (!zipPath) {
+        const srcZip = path.join(workRoot, `${info.repoName}-${Date.now()}.zip`);
+        const dl = await gh.downloadRepoZip(info.owner, info.repoName, info.defaultBranch, srcZip, dataDir);
+        if (!dl.ok) return c.json({ ok: false, error: dl.error }, 400);
+        check = checkLocalSource(srcZip, workRoot);
+        zipPath = srcZip;
+      }
       if (!check.ok) {
         try { check.cleanup(); } catch { /* ignore */ }
         try { fs.rmSync(zipPath, { force: true }); } catch { /* ignore */ }
@@ -619,6 +650,7 @@ export default function (app, ctx) {
             version: (c.manifest && c.manifest.version) || null,
             trust: (c.manifest && c.manifest.trust) || 'restricted',
             risk: r,
+            entryMissing: !!c.entryMissing, // 源码项目标记：entry 指向的文件不在源码包内
           };
         });
         // 拦截自我安装：合集仓库里若某项 manifest.id === self，禁止走完 install 链路
@@ -634,8 +666,8 @@ export default function (app, ctx) {
             instructions: SELF_UPDATE_INSTRUCTIONS,
           }, 400);
         }
-        appendLog(dataDir, { action: 'install.github.multi', url, ok: true, repo: info.repo, count: candidates.length });
-        return c.json({ ok: true, multiple: true, repo: info.repo, candidates, stagedZip: zipPath, stagingRoot: check.stagingRoot || null });
+        appendLog(dataDir, { action: 'install.github.multi', url, ok: true, repo: info.repo, source, count: candidates.length });
+        return c.json({ ok: true, multiple: true, repo: info.repo, candidates, source, stagedZip: zipPath, stagingRoot: check.stagingRoot || null });
       }
 
       // 拦截自我安装（单插件分支）：manifest.id === self 时拒绝并清理临时产物
@@ -652,11 +684,12 @@ export default function (app, ctx) {
       }
 
       const risk = runRiskCheck(check, hanaVersion);
-      appendLog(dataDir, { action: 'install.github.apply', url, ok: true, repo: info.repo, riskLevel: risk.level });
+      appendLog(dataDir, { action: 'install.github.apply', url, ok: true, repo: info.repo, source, riskLevel: risk.level });
 
       return c.json({
         ok: true,
         repo: info.repo,
+        source,
         pluginName: check.manifest?.name || check.manifest?.id || info.repoName,
         pluginId: check.manifest?.id || null,
         version: check.manifest?.version || null,
@@ -763,6 +796,7 @@ export default function (app, ctx) {
             version: (c.manifest && c.manifest.version) || null,
             trust: (c.manifest && c.manifest.trust) || 'restricted',
             risk: r,
+            entryMissing: !!c.entryMissing, // 源码项目标记：entry 指向的文件不在源码包内
           };
         });
         const selfHit = candidates.find((c) => c.pluginId === SELF_PLUGIN_ID);

@@ -7,7 +7,8 @@
   "private": true,
   "scripts": {
     "smoke": "node scripts/smoke-test.mjs",
-    "net-check": "node scripts/net-check.mjs"
+    "net-check": "node scripts/net-check.mjs",
+    "test:release": "node scripts/_test_release.mjs"
   },
   "dependencies": {}
 }

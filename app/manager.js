@@ -524,14 +524,18 @@
       }
       // 插件合集仓库：列出候选，等待用户选择后继续
       if (rr.multiple && Array.isArray(rr.candidates)) {
-        STATE.pendingInstall = { type: 'github', url, stagingRoot: rr.stagingRoot || null, stagedZip: rr.stagedZip || null };
-        renderCandidates(rr.candidates, 'github');
+        STATE.pendingInstall = { type: 'github', url, stagingRoot: rr.stagingRoot || null, stagedZip: rr.stagedZip || null, source: rr.source };
+        renderCandidates(rr.candidates, 'github', rr.source);
         setInstallStatus('warning', `检测到 ${rr.candidates.length} 个插件，请选择要安装的一项`);
         return;
       }
-      STATE.pendingInstall = { type: 'github', stagingPath: rr.pluginRoot, sourcePath: rr.stagedZip, url, stagingRoot: rr.stagingRoot || null, stagedZip: rr.stagedZip || null };
+      STATE.pendingInstall = { type: 'github', stagingPath: rr.pluginRoot, sourcePath: rr.stagedZip, url, stagingRoot: rr.stagingRoot || null, stagedZip: rr.stagedZip || null, source: rr.source };
       STATE.risk = rr.risk;
       $('gh-proceed').style.display = '';
+      // 标注安装来源：Release 发布包（作者交付的构建产物）或源码（无可用 Release 资产时回退）
+      $('gh-repo-info').innerHTML += `<div class="info-row" style="margin-top:8px"><span class="k">来源</span><span class="v">${rr.source === 'release'
+        ? '<span class="src-chip ok">Release 发布包</span> 作者打包的构建产物'
+        : '<span class="src-chip">GitHub 源码</span> 无可用 Release 资产，已从源码解析'}</span></div>`;
       renderRisk();
       setInstallStatus('ready', `检测通过（${rr.risk.level === 'high' ? '高风险，请谨慎' : '低/中风险'}）`);
     };
@@ -567,9 +571,12 @@
   }
 
   /** 插件合集候选选择（github/local 通用） */
-  function renderCandidates(candidates, type) {
+  function renderCandidates(candidates, type, source) {
     const wrap = $('cand-area');
     if (!wrap || !Array.isArray(candidates) || !candidates.length) return;
+    const srcBadge = source === 'release'
+      ? '<span class="src-chip ok">Release 发布包</span>'
+      : (source === 'source' ? '<span class="src-chip">GitHub 源码</span>' : '');
     const items = candidates.map((c, i) => {
       const trustLabel = c.trust === 'full-access' ? '完全访问' : '受限';
       const riskLabel = { high: '高风险', medium: '中风险', low: '低风险' }[c.risk && c.risk.level] || '未知';
@@ -579,10 +586,10 @@
           ${c.version ? `<span class="tag">v${esc(c.version)}</span>` : ''}
           <span class="tag ${c.trust === 'full-access' ? 'trust-high' : 'trust-low'}">${esc(trustLabel)}</span>
         </div>
-        <div class="cand-meta">${esc(c.pluginId || '')} · 风险：${esc(riskLabel)}</div>
+        <div class="cand-meta">${esc(c.pluginId || '')} · 风险：${esc(riskLabel)}${c.entryMissing ? ' · <span class="cand-warn">入口文件缺失（源码项目，建议从 Releases 安装）</span>' : ''}</div>
       </div>`;
     }).join('');
-    wrap.innerHTML = `<div class="cand-hint">该来源包含 ${candidates.length} 个插件，请选择要安装的一项：</div><div class="cand-list">${items}</div>`;
+    wrap.innerHTML = `<div class="cand-hint">该来源包含 ${candidates.length} 个插件，请选择要安装的一项： ${srcBadge}</div><div class="cand-list">${items}</div>`;
     wrap.style.display = '';
     wrap.querySelectorAll('.cand-item').forEach((el) => {
       el.onclick = () => {
