@@ -487,8 +487,17 @@ html, body {
 .discover-wrap { margin-top: 26px; border-top: 1px dashed var(--line-strong); padding-top: 16px; }
 .discover-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .discover-head h3 { font-size: 14px; font-weight: 700; }
-.discover-src { font-size: 11.5px; color: var(--ink-faint); flex: 1; }
+.discover-src { font-size: 11.5px; color: var(--ink-faint); flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .discover-head .btn-sm { padding: 3px 12px; font-size: 12px; }
+.src-chip {
+  font-size: 10.5px; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--line-strong); background: rgba(255,255,255,0.6); color: var(--ink-soft);
+  white-space: nowrap;
+}
+.src-chip.ok { background: rgba(96, 143, 104, 0.10); color: #5d7d62; border-color: rgba(96, 143, 104, 0.28); }
+.src-chip.warn { background: rgba(166, 123, 63, 0.10); color: var(--warn); border-color: rgba(166, 123, 63, 0.28); }
+.src-time { color: var(--ink-faint); white-space: nowrap; }
+.src-note { color: var(--warn); font-size: 11px; }
 /* 醒目红字免责声明：未经检测,自行负责 */
 .discover-warn {
   background: rgba(176, 77, 69, 0.10);
@@ -506,7 +515,7 @@ html, body {
 }
 .discover-card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
 .discover-card.selected { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(194, 91, 79, 0.12); }
-.discover-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.discover-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .discover-name { font-size: 13px; font-weight: 600; line-height: 1.45; word-break: break-word; }
 .discover-owner { font-size: 11px; color: var(--ink-faint); font-weight: 400; margin-top: 2px; }
 .discover-stars {
@@ -524,7 +533,8 @@ html, body {
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .discover-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 8px; }
-.discover-repo { font-size: 10.5px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.discover-repo { font-size: 10.5px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.discover-updated { font-size: 10.5px; color: var(--ink-faint); white-space: nowrap; flex-shrink: 0; }
 
 /* ── 备份还原：还原功能灰度屏蔽 ───────────── */
 .btn:disabled, .btn[disabled] {

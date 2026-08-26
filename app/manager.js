@@ -524,12 +524,12 @@
       }
       // 插件合集仓库：列出候选，等待用户选择后继续
       if (rr.multiple && Array.isArray(rr.candidates)) {
-        STATE.pendingInstall = { type: 'github', url };
+        STATE.pendingInstall = { type: 'github', url, stagingRoot: rr.stagingRoot || null, stagedZip: rr.stagedZip || null };
         renderCandidates(rr.candidates, 'github');
         setInstallStatus('warning', `检测到 ${rr.candidates.length} 个插件，请选择要安装的一项`);
         return;
       }
-      STATE.pendingInstall = { type: 'github', stagingPath: rr.pluginRoot, sourcePath: rr.stagedZip, url };
+      STATE.pendingInstall = { type: 'github', stagingPath: rr.pluginRoot, sourcePath: rr.stagedZip, url, stagingRoot: rr.stagingRoot || null, stagedZip: rr.stagedZip || null };
       STATE.risk = rr.risk;
       $('gh-proceed').style.display = '';
       renderRisk();
@@ -552,12 +552,12 @@
       }
       // 插件合集 zip/目录：列出候选，等待用户选择后继续
       if (r.multiple && Array.isArray(r.candidates)) {
-        STATE.pendingInstall = { type: 'local' };
+        STATE.pendingInstall = { type: 'local', stagingRoot: r.stagingRoot || null };
         renderCandidates(r.candidates, 'local');
         setInstallStatus('warning', `检测到 ${r.candidates.length} 个插件，请选择要安装的一项`);
         return;
       }
-      STATE.pendingInstall = { type: 'local', sourcePath: path };
+      STATE.pendingInstall = { type: 'local', sourcePath: path, stagingRoot: r.stagingRoot || null };
       STATE.risk = r.risk;
       $('local-proceed').style.display = '';
       renderRisk();
@@ -589,10 +589,13 @@
         wrap.querySelectorAll('.cand-item').forEach((x) => x.classList.remove('selected'));
         el.classList.add('selected');
         const c = candidates[+el.dataset.i];
+        const prev = STATE.pendingInstall || {};
         STATE.pendingInstall = {
           type,
           sourcePath: c.pluginRoot,
-          url: type === 'github' ? (STATE.pendingInstall && STATE.pendingInstall.url) : undefined,
+          url: type === 'github' ? prev.url : undefined,
+          stagingRoot: prev.stagingRoot || null,
+          stagedZip: prev.stagedZip || null,
         };
         STATE.risk = c.risk || null;
         renderRisk();
@@ -613,20 +616,48 @@
   }
 
   // ── 可安装插件清单 ───────────────────────
-  /** 加载可安装插件清单（后端拉取 + 10min 缓存 + 已装排除） */
+  /** 相对时间：'刚刚' / 'N 分钟前' / 'N 小时前' / 'N 天前' / 日期 */
+  function timeAgo(iso) {
+    if (!iso) return '';
+    const t = new Date(iso).getTime();
+    if (!Number.isFinite(t)) return '';
+    const diff = Date.now() - t;
+    if (diff < 60 * 1000) return '刚刚';
+    if (diff < 60 * 60 * 1000) return Math.floor(diff / 60000) + ' 分钟前';
+    if (diff < 24 * 60 * 60 * 1000) return Math.floor(diff / 3600000) + ' 小时前';
+    if (diff < 30 * 24 * 60 * 60 * 1000) return Math.floor(diff / 86400000) + ' 天前';
+    return new Date(t).toLocaleDateString('zh-CN');
+  }
+
+  /** 加载可安装插件清单（后端三级拉取：live 实时 → 磁盘缓存 → 静态清单，已装排除） */
   async function loadDiscover(force) {
     if (!force && STATE.discover && STATE.discover.loaded) return;
     const list = $('discover-list');
     if (list) list.innerHTML = '<div class="empty">加载可安装插件清单…</div>';
-    const r = await api('GET', '/api/install/discover', undefined, { timeoutMs: 25000 });
+    const r = await api('GET', '/api/install/discover', undefined, { timeoutMs: 45000 });
     if (!r || !r.ok) {
       if (list) list.innerHTML = `<div class="empty">${esc((r && r.error) || '加载失败')} <button class="btn btn-ghost btn-sm" id="discover-retry">重试</button></div>`;
       const rt = $('discover-retry');
       if (rt) rt.onclick = () => loadDiscover(true);
       return;
     }
-    STATE.discover = { loaded: true, plugins: r.plugins || [] };
+    STATE.discover = { loaded: true, plugins: r.plugins || [], source: r.source, fetchedAt: r.fetchedAt, cacheNote: r.cacheNote };
+    renderDiscoverMeta();
     renderDiscover();
+  }
+
+  /** 渲染数据来源徽标 + 抓取时间 */
+  function renderDiscoverMeta() {
+    const el = $('discover-meta');
+    if (!el) return;
+    const s = (STATE.discover && STATE.discover.source) || '';
+    const fetchedAt = (STATE.discover && STATE.discover.fetchedAt) || '';
+    const note = (STATE.discover && STATE.discover.cacheNote) || '';
+    const srcLabel = { live: '实时抓取 GitHub 三个 topic', 'live-cache': '实时抓取（30min 缓存）', cache: '上次快照（实时抓取失败）', json: '静态清单兜底', 'json-cache': '静态清单兜底（缓存）' }[s] || '';
+    const srcCls = { live: 'ok', 'live-cache': 'ok', cache: 'warn', json: 'warn', 'json-cache': 'warn' }[s] || '';
+    el.innerHTML = `<span class="src-chip ${srcCls}">${esc(srcLabel || s || '')}</span>`
+      + (fetchedAt ? `<span class="src-time">更新于 ${esc(timeAgo(fetchedAt))}</span>` : '')
+      + (note ? `<span class="src-note">${esc(note)}</span>` : '');
   }
 
   /** 渲染可安装插件卡片（点击卡片把地址填入上方安装地址栏） */
@@ -643,9 +674,11 @@
       const starsBadge = (Number.isFinite(p.stars) && p.stars > 0)
         ? `<span class="discover-stars" title="GitHub stars">★ ${p.stars}</span>`
         : '';
+      const updAt = timeAgo(p.updatedAt);
+      const updHtml = updAt ? `<span class="discover-updated" title="最近推送">↻ ${esc(updAt)}</span>` : '';
       return `
       <div class="discover-card${selected ? ' selected' : ''}" data-repo="${esc(p.repo)}" style="animation:cardIn 300ms ${Math.min(i * 20, 400)}ms backwards">
-        <div class="discover-head">
+        <div class="discover-card-head">
           <div class="discover-name">${esc(p.repoName || p.repo)}</div>
           ${starsBadge}
         </div>
@@ -653,6 +686,7 @@
         <div class="discover-desc">${esc(p.description || '（无描述）')}</div>
         <div class="discover-foot">
           <span class="discover-repo">${esc(p.repo)}</span>
+          ${updHtml}
           <a class="upd-gh" href="${esc(p.github)}" target="_blank" rel="noopener">打开仓库</a>
         </div>
       </div>`;
@@ -728,10 +762,13 @@
         if (!ok) return;
       }
       setInstallStatus('installing');
+      // cleanupPaths：安装结束后清理本次临时产物（staging 解压目录 + 下载 zip），仅限后端 tmp 内
+      const cleanupPaths = [p.stagingRoot, p.stagedZip].filter(Boolean);
       const r = await api('POST', '/api/install/confirm', {
         sourcePath: p.sourcePath,
         // GitHub 路径带 url，让后端自动关联（overwrite=false，不会破坏已有设置）
         ...(p.type === 'github' && p.url ? { githubUrl: p.url } : {}),
+        ...(cleanupPaths.length ? { cleanupPaths } : {}),
       }, { timeoutMs: 60000 });
       if (r && r.ok) {
         setInstallStatus('success');
@@ -752,7 +789,11 @@
         if (!ok) return;
       }
       setInstallStatus('installing');
-      const r = await api('POST', '/api/install/confirm', { sourcePath: p.sourcePath }, { timeoutMs: 60000 });
+      const cleanupPaths = [p.stagingRoot, p.stagedZip].filter(Boolean);
+      const r = await api('POST', '/api/install/confirm', {
+        sourcePath: p.sourcePath,
+        ...(cleanupPaths.length ? { cleanupPaths } : {}),
+      }, { timeoutMs: 60000 });
       if (r && r.ok) {
         setInstallStatus('success');
         toast('安装成功', 'success');
@@ -1140,7 +1181,7 @@
           <div class="discover-wrap">
             <div class="discover-head">
               <h3>可安装插件（点击插件卡片可进行解析下载安装）</h3>
-              <span class="discover-src">来自 github.com/xxisme/hana-plugins-manager 插件清单</span>
+              <span class="discover-src" id="discover-meta">来自 github.com/xxisme/hana-plugins-manager 插件清单</span>
               <button class="btn btn-ghost btn-sm" id="discover-refresh">刷新</button>
             </div>
             <div class="discover-warn">⚠ 以下插件均搜集自 GitHub，未经检测与测试，请自行评估安全性后安装。</div>

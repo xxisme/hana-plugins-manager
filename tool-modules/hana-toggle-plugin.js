@@ -27,12 +27,15 @@ export async function execute(input = {}) {
   const id = String(input.id || '').trim();
   const enabled = !!input.enabled;
   if (!id) return { ok: false, error: 'id 必填' };
+  // 白名单校验：非法 id 拒绝，防止降级写 preferences.json 时注入脏数据
+  const safeId = hanaApi.safePathSegment(id);
+  if (!safeId) return { ok: false, error: '非法插件 id' };
 
   try {
-    const r = await hanaApi.setPluginEnabled(home, id, enabled);
+    const r = await hanaApi.setPluginEnabled(home, safeId, enabled);
     if (r.ok) {
-      appendLog(dataDir, { action: enabled ? 'enable' : 'disable', pluginId: id, ok: true, via: 'agent' });
-      return { ok: true, id, enabled };
+      appendLog(dataDir, { action: enabled ? 'enable' : 'disable', pluginId: safeId, ok: true, via: 'agent' });
+      return { ok: true, id: safeId, enabled };
     }
     // 降级：编辑 preferences.json
     const prefsPath = path.join(home, 'preferences.json');
@@ -41,13 +44,13 @@ export async function execute(input = {}) {
       try { prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf-8')); } catch { /* ignore */ }
     }
     let disabled = Array.isArray(prefs.disabled_plugins) ? prefs.disabled_plugins : [];
-    const idx = disabled.indexOf(id);
+    const idx = disabled.indexOf(safeId);
     if (enabled) { if (idx !== -1) disabled.splice(idx, 1); }
-    else if (idx === -1) disabled.push(id);
+    else if (idx === -1) disabled.push(safeId);
     prefs.disabled_plugins = disabled;
     fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf-8');
-    appendLog(dataDir, { action: enabled ? 'enable' : 'disable', pluginId: id, ok: true, degraded: true });
-    return { ok: true, id, enabled, degraded: true, warning: '已写入本地配置，重启 Hana 后完全生效' };
+    appendLog(dataDir, { action: enabled ? 'enable' : 'disable', pluginId: safeId, ok: true, degraded: true });
+    return { ok: true, id: safeId, enabled, degraded: true, warning: '已写入本地配置，重启 Hana 后完全生效' };
   } catch (e) {
     return { ok: false, error: e.message };
   }

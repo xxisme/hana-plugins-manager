@@ -34,6 +34,20 @@ export async function execute(input = {}) {
 
   const isGitHub = /github\.com|git@github/.test(source) || input.sourceType === 'github';
 
+  // 临时产物清理（仅限 dataDir/tmp 内，防越界删任意路径）
+  let stagedCleanup = null;   // staging 解压目录清理函数（目录来源为 no-op）
+  let zipPathToRemove = null; // 下载的 zip 文件路径
+  const tmpRoot = path.join(dataDir, 'tmp');
+  const safeCleanup = () => {
+    try {
+      if (stagedCleanup) stagedCleanup();
+      if (zipPathToRemove) {
+        const r = path.resolve(zipPathToRemove);
+        if (r.startsWith(path.resolve(tmpRoot) + path.sep)) fs.rmSync(r, { force: true });
+      }
+    } catch { /* ignore */ }
+  };
+
   try {
     let stagedRoot = null;
     let risk = null;
@@ -44,22 +58,26 @@ export async function execute(input = {}) {
       const workRoot = path.join(dataDir, 'tmp');
       fs.mkdirSync(workRoot, { recursive: true });
       const zipPath = path.join(workRoot, `${info.repoName}-${Date.now()}.zip`);
+      zipPathToRemove = zipPath;
       const dl = await gh.downloadRepoZip(info.owner, info.repoName, info.defaultBranch, zipPath, dataDir);
       if (!dl.ok) return { ok: false, error: dl.error };
       const check = checkLocalSource(zipPath, workRoot);
       if (!check.ok) return { ok: false, error: '结构校验失败: ' + check.errors.join('；') };
+      stagedCleanup = check.cleanup;
       stagedRoot = check.pluginRoot;
       risk = runRiskCheck(check, readServerVersion(home));
     } else {
       if (!fs.existsSync(source)) return { ok: false, error: `路径不存在: ${source}` };
       const check = checkLocalSource(source, path.join(dataDir, 'tmp'));
       if (!check.ok) return { ok: false, error: '结构校验失败: ' + check.errors.join('；') };
+      stagedCleanup = check.cleanup;
       stagedRoot = check.pluginRoot;
       risk = runRiskCheck(check, readServerVersion(home));
     }
 
     // 风险确认
     if (!input.confirm && risk.level === 'high') {
+      safeCleanup();
       return {
         ok: false, needConfirm: true,
         error: `风险等级 ${risk.level}：${risk.findings.filter((f) => f.level === 'high').map((f) => f.detail).join('；')}`,
@@ -69,6 +87,7 @@ export async function execute(input = {}) {
     }
 
     const r = await hanaApi.installFromPath(home, stagedRoot, {});
+    safeCleanup();
     if (!r.ok) return { ok: false, error: r.error, risk };
 
     // GitHub 安装路径：成功后自动关联 source（不覆盖已有设置）
@@ -96,6 +115,7 @@ export async function execute(input = {}) {
       ...(warnings.length ? { warnings } : {}),
     };
   } catch (e) {
+    safeCleanup();
     return { ok: false, error: e.message };
   }
 }

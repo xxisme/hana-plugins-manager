@@ -312,11 +312,15 @@ export default function (app, ctx) {
   });
 
   // ── 可安装插件发现 ──────────────────────
-  // 固定清单地址（xxisme/hana-plugins-manager 仓库的 hanaagent-plugins.json）。
-  // 注意：github blob 页 URL 需转成 raw 才能读 JSON；raw 域名不受 api.github.com 限流影响。
+  // 三级数据源：live（GitHub Search API 实时抓取三个 topic）→ 磁盘缓存 → 静态清单 JSON。
+  // 参考 skill「hana-plugin-topic-harvester」的抓取/过滤规则，把人工流水线内嵌为插件能力。
+  const DISCOVER_TOPICS = ['oh-plugin', 'openhanako-plugin', 'hanaagent-plugin'];
   const DISCOVER_URL = 'https://raw.githubusercontent.com/xxisme/hana-plugins-manager/master/hanaagent-plugins.json';
-  const DISCOVER_TTL = 10 * 60 * 1000; // 10 分钟缓存
-  let discoverCache = { at: 0, data: null };
+  const CACHE_FILE = 'discover-cache.json';
+  const LIVE_TTL = 30 * 60 * 1000;    // live 结果内存缓存 30min（Search API 匿名限流 60 次/h，3 个 topic=3 次）
+  const JSON_TTL = 30 * 60 * 1000;    // 静态 JSON 结果内存缓存 30min（raw 域名不受 api.github.com 限流，但保一致性）
+  let discoverLiveCache = { at: 0, data: null };   // live 内存缓存
+  let discoverJsonCache = { at: 0, data: null };    // json 兜底内存缓存
 
   /** 收集本机已安装插件的 GitHub 仓库集合（owner/repo 小写），用于清单排除 */
   function collectInstalledRepos(home, dataDir) {
@@ -334,62 +338,184 @@ export default function (app, ctx) {
     return set;
   }
 
+  /** 判断仓库是否为可收录的 HanaAgent 插件（照搬 skill 的过滤规则：排除 skill/集合/无关仓库） */
+  function isPluginCandidate(repo) {
+    const name = String(repo.name || '').toLowerCase();
+    const desc = String(repo.description || '').toLowerCase();
+    const topics = Array.isArray(repo.topics) ? repo.topics.map((t) => String(t).toLowerCase()) : [];
+    const hasPluginTopic = topics.some((t) => ['oh-plugin', 'openhanako-plugin', 'hanaagent-plugin'].includes(t));
+
+    // 1) skill 类：名字或描述强调是 skill，且没有有效 plugin topic
+    const skillish = name.includes('skill') || desc.includes('skill') || topics.some((t) => t.startsWith('skill'));
+    if (skillish && !hasPluginTopic) return false;
+
+    // 2) 插件集合：description 明示集合/汇总，或名字以 Plugins/plugin-collection/-all 结尾
+    const collectionDesc = /集合|汇总|collection|plugins collection|插件集合|plugin pack|插件包|合集/.test(desc);
+    const collectionName = /(plugins|plugin-collection|-all|-pack)$/.test(name);
+    if (collectionDesc || collectionName) return false;
+
+    // 3) 与 HanaAgent 无关：description 完全没有 Hana/Hanako/OpenHanako 字样 → 跳过（宁可漏收不误收）
+    const mentionsHana = /hana|hanako|openhanako/.test(desc) || /hana|hanako|openhanako/.test(name);
+    if (!mentionsHana) return false;
+
+    return true;
+  }
+
+  /** 抓取单个 topic 的仓库列表（GitHub Search API） */
+  async function searchTopicRepos(topic, dataDir) {
+    const token = gh.readGithubToken(dataDir);
+    const headers = { 'user-agent': 'hana-plugins-manager', accept: 'application/vnd.github+json' };
+    if (token) headers.authorization = `Bearer ${token}`;
+    const url = `https://api.github.com/search/repositories?q=topic:${encodeURIComponent(topic)}&sort=updated&per_page=100`;
+    try {
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+      if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+      const j = await res.json();
+      return { ok: true, items: Array.isArray(j.items) ? j.items : [] };
+    } catch (e) {
+      return { ok: false, error: e.message || e.name };
+    }
+  }
+
+  /** 实时抓取三个 topic 并合并过滤，得到可安装插件列表 */
+  async function fetchLiveDiscover(dataDir) {
+    const results = await Promise.all(
+      DISCOVER_TOPICS.map((t) => searchTopicRepos(t, dataDir).then((r) => ({ topic: t, r })))
+    );
+    // 任一个 topic 失败都视为 live 失败（数据不完整宁可走兜底）
+    const failed = results.find((x) => !x.r.ok);
+    if (failed) return { ok: false, error: `topic ${failed.topic} 抓取失败: ${failed.r.error || ''}${failed.r.status === 403 ? '（GitHub API 限流，请配置 Token 或稍后再试）' : ''}` };
+
+    // 合并去重：按 full_name（owner/repo）归一
+    const byRepo = new Map();
+    for (const { r } of results) {
+      for (const item of r.items || []) {
+        const full = String(item.full_name || '').trim().toLowerCase();
+        if (!full) continue;
+        if (!byRepo.has(full)) byRepo.set(full, item);
+      }
+    }
+
+    const plugins = [];
+    for (const [full, item] of byRepo) {
+      if (!isPluginCandidate(item)) continue;
+      const starsRaw = Number(item.stargazers_count);
+      const stars = Number.isFinite(starsRaw) && starsRaw >= 0 ? Math.floor(starsRaw) : 0;
+      plugins.push({
+        github: String(item.html_url || `https://github.com/${full}`),
+        repo: full,
+        owner: String(item.owner?.login || full.split('/')[0] || ''),
+        repoName: String(item.name || full.split('/')[1] || full),
+        description: String(item.description || '').trim(),
+        stars,
+        updatedAt: String(item.pushed_at || item.updated_at || ''),
+        topics: Array.isArray(item.topics) ? item.topics.slice(0, 6) : [],
+      });
+    }
+    // stars 降序，让热门插件排前面
+    plugins.sort((a, b) => b.stars - a.stars);
+    return { ok: true, plugins, fetchedAt: new Date().toISOString() };
+  }
+
+  /** 读磁盘缓存（live 失败时的兜底） */
+  function readDiscoverCache(dataDir) {
+    try {
+      const p = path.join(dataDir, CACHE_FILE);
+      if (!fs.existsSync(p)) return null;
+      const j = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      if (!j || !Array.isArray(j.plugins)) return null;
+      return { at: Number(j.at) || 0, plugins: j.plugins, fetchedAt: j.fetchedAt || null };
+    } catch { return null; }
+  }
+
+  /** 写磁盘缓存 */
+  function writeDiscoverCache(dataDir, payload) {
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(path.join(dataDir, CACHE_FILE), JSON.stringify({ at: Date.now(), ...payload }, null, 2), 'utf-8');
+    } catch { /* 缓存写失败不影响主流程 */ }
+  }
+
+  /** 静态 JSON 兜底（原逻辑，raw → Contents API） */
+  async function fetchJsonDiscover(dataDir) {
+    const raw = await fetchDiscoverText(DISCOVER_URL, null, dataDir);
+    let text = null;
+    let via = 'raw';
+    if (raw.ok) {
+      text = raw.text;
+    } else {
+      const apiUrl = 'https://api.github.com/repos/xxisme/hana-plugins-manager/contents/hanaagent-plugins.json?ref=master';
+      const r2 = await fetchDiscoverText(apiUrl, gh.readGithubToken(dataDir), dataDir);
+      if (r2.ok) { text = r2.text; via = 'api'; }
+      else return { ok: false, error: `静态清单拉取失败: ${r2.error}` };
+    }
+    let j = null;
+    try { j = JSON.parse(text); } catch { /* 统一报格式错 */ }
+    const projects = j && Array.isArray(j.projects) ? j.projects : [];
+    if (!projects.length) return { ok: false, error: '插件清单为空或格式不符' };
+
+    const plugins = [];
+    for (const it of projects) {
+      const gh0 = String(it.github || '').trim();
+      if (!gh0) continue;
+      const parsed = parseGithubUrl(gh0);
+      if (!parsed) continue;
+      const starsRaw = Number(it.stars);
+      const stars = Number.isFinite(starsRaw) && starsRaw >= 0 ? Math.floor(starsRaw) : 0;
+      plugins.push({
+        github: gh0,   // 保留原始地址（可能含 /tree/... 子路径，合集子插件可辨）
+        repo: parsed.repo,
+        owner: parsed.owner,
+        repoName: parsed.repoName,
+        description: String(it.description || '').trim(),
+        stars,
+        updatedAt: String(it.updatedAt || ''),
+        topics: Array.isArray(it.topics) ? it.topics.slice(0, 6) : [],
+      });
+    }
+    return { ok: true, plugins, lastUpdated: j.lastUpdated || null, via };
+  }
+
   app.get('/api/install/discover', async (c) => {
     const home = currentHome();
     if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     try {
-      if (discoverCache.data && Date.now() - discoverCache.at < DISCOVER_TTL) {
-        return c.json({ ok: true, ...discoverCache.data, _cache: true });
-      }
-
-      // 双通道拉取清单：优先 raw（不受 api.github.com 限流）；失败 fallback Contents API（支持 Token）
-      const raw = await fetchDiscoverText(DISCOVER_URL, null, dataDir);
-      let text = null;
-      let fetchNote = 'raw';
-      if (raw.ok) {
-        text = raw.text;
-      } else {
-        const apiUrl = 'https://api.github.com/repos/xxisme/hana-plugins-manager/contents/hanaagent-plugins.json?ref=master';
-        const via = await fetchDiscoverText(apiUrl, gh.readGithubToken(dataDir), dataDir);
-        if (via.ok) {
-          text = via.text;
-          fetchNote = 'api';
-        } else {
-          return c.json({
-            ok: false,
-            error: `插件清单拉取失败: ${via.error}${String(via.error).includes('403') ? '（GitHub API 限流，请配置 Token 或稍后再试）' : ''}`,
-          }, 502);
-        }
-      }
-
-      let j = null;
-      try { j = JSON.parse(text); } catch { /* 下面统一报格式错 */ }
-      const projects = j && Array.isArray(j.projects) ? j.projects : [];
-      if (!projects.length) return c.json({ ok: false, error: '插件清单为空或格式不符' }, 502);
-
       const installed = collectInstalledRepos(home, dataDir);
-      const plugins = [];
-      for (const it of projects) {
-        const gh0 = String(it.github || '').trim();
-        if (!gh0) continue;
-        const parsed = parseGithubUrl(gh0);
-        if (!parsed) continue;
-        // 排除本机已装（无论是否最新）：按 owner/repo 归一比对，合集仓库子插件也能命中
-        if (installed.has(parsed.repo.toLowerCase())) continue;
-        // stars 缺字段/非数字归 0；前端只在 >0 时渲染，0 不显式画"0 ★"
-        const starsRaw = Number(it.stars);
-        const stars = Number.isFinite(starsRaw) && starsRaw >= 0 ? Math.floor(starsRaw) : 0;
-        plugins.push({
-          github: gh0,   // 保留原始地址（可能含 /tree/... 子路径，合集子插件可辨）
-          repo: parsed.repo,
-          owner: parsed.owner,
-          repoName: parsed.repoName,
-          description: String(it.description || '').trim(),
-          stars,
-        });
+      const excludeInstalled = (plugins) => plugins.filter((p) => !installed.has(String(p.repo).toLowerCase()));
+
+      // ① live 内存缓存命中（30min 内）→ 直接用
+      if (discoverLiveCache.data && Date.now() - discoverLiveCache.at < LIVE_TTL) {
+        const plugins = excludeInstalled(discoverLiveCache.data.plugins);
+        return c.json({ ok: true, plugins, lastUpdated: discoverLiveCache.data.fetchedAt, fetchedAt: discoverLiveCache.data.fetchedAt, source: 'live-cache' });
       }
-      discoverCache = { at: Date.now(), data: { plugins, lastUpdated: j.lastUpdated || null } };
-      return c.json({ ok: true, plugins, lastUpdated: j.lastUpdated || null, fetchedAt: new Date().toISOString(), via: fetchNote });
+
+      // ② 实时抓取三个 topic
+      const live = await fetchLiveDiscover(dataDir);
+      if (live.ok) {
+        discoverLiveCache = { at: Date.now(), data: { plugins: live.plugins, fetchedAt: live.fetchedAt } };
+        writeDiscoverCache(dataDir, { plugins: live.plugins, fetchedAt: live.fetchedAt });
+        return c.json({ ok: true, plugins: excludeInstalled(live.plugins), lastUpdated: live.fetchedAt, fetchedAt: live.fetchedAt, source: 'live' });
+      }
+
+      // ③ live 失败 → 磁盘缓存兜底（上次成功抓取的快照）
+      const disk = readDiscoverCache(dataDir);
+      if (disk && disk.plugins.length) {
+        return c.json({ ok: true, plugins: excludeInstalled(disk.plugins), lastUpdated: disk.fetchedAt, fetchedAt: disk.fetchedAt, source: 'cache', cacheNote: `实时抓取失败（${live.error}），已用上次快照` });
+      }
+
+      // ④ 磁盘缓存也没有 → 静态 JSON 兜底（带 30min 内存缓存）
+      if (discoverJsonCache.data && Date.now() - discoverJsonCache.at < JSON_TTL) {
+        const plugins = excludeInstalled(discoverJsonCache.data.plugins);
+        return c.json({ ok: true, plugins, lastUpdated: discoverJsonCache.data.lastUpdated, fetchedAt: new Date().toISOString(), source: 'json-cache', cacheNote: `实时抓取失败（${live.error}）` });
+      }
+      const json = await fetchJsonDiscover(dataDir);
+      if (json.ok) {
+        discoverJsonCache = { at: Date.now(), data: { plugins: json.plugins, lastUpdated: json.lastUpdated } };
+        return c.json({ ok: true, plugins: excludeInstalled(json.plugins), lastUpdated: json.lastUpdated, fetchedAt: new Date().toISOString(), source: 'json', via: json.via, cacheNote: `实时抓取失败（${live.error}）` });
+      }
+
+      // ⑤ 全部失败
+      return c.json({ ok: false, error: `实时抓取失败（${live.error}）；磁盘缓存与静态清单均不可用：${json.error}` }, 502);
     } catch (e) {
       return c.json({ ok: false, error: e.message || '插件清单拉取失败' }, 502);
     }
@@ -493,7 +619,7 @@ export default function (app, ctx) {
           };
         });
         appendLog(dataDir, { action: 'install.github.multi', url, ok: true, repo: info.repo, count: candidates.length });
-        return c.json({ ok: true, multiple: true, repo: info.repo, candidates });
+        return c.json({ ok: true, multiple: true, repo: info.repo, candidates, stagedZip: zipPath, stagingRoot: check.stagingRoot || null });
       }
 
       const risk = runRiskCheck(check, hanaVersion);
@@ -508,6 +634,7 @@ export default function (app, ctx) {
         trust: check.manifest?.trust || null,
         stagedZip: zipPath,
         pluginRoot: check.pluginRoot,
+        stagingRoot: check.stagingRoot || null, // confirm 后由 cleanupPaths 清理
         cleanupKey: null, // 实际安装走 confirm 时重新校验并安装
         risk,
       });
@@ -519,8 +646,24 @@ export default function (app, ctx) {
   // ── 安装：确认并安装 staged（github 或 local 通用）──
   // 可选 githubUrl：传了则在安装成功后自动关联该 GitHub 地址（已有不同 source 时不覆盖，
   // 结果通过 warnings 字段返回给前端 toast 提示）
+  // 可选 cleanupPaths：安装结束后统一清理的临时产物（仅限 dataDir/tmp 内，防越界删任意路径）
+  const TMP_ROOT = path.join(dataDir, 'tmp');
+  function cleanupStagedPaths(paths) {
+    if (!Array.isArray(paths) || !paths.length) return;
+    const rootNorm = path.resolve(TMP_ROOT);
+    for (const p of paths) {
+      try {
+        const r = path.resolve(String(p));
+        // 只允许清理 tmp 内的内部产物（staging 解压目录 / 下载的 zip）
+        if (r === rootNorm || r.startsWith(rootNorm + path.sep)) {
+          fs.rmSync(r, { recursive: true, force: true });
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
   app.post('/api/install/confirm', async (c) => {
-    const { sourcePath, allowDowngrade = false, githubUrl } = await c.req.json();
+    const { sourcePath, allowDowngrade = false, githubUrl, cleanupPaths } = await c.req.json();
     const home = currentHome();
     if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!sourcePath || !fs.existsSync(sourcePath)) {
@@ -528,6 +671,8 @@ export default function (app, ctx) {
     }
     try {
       const r = await hanaApi.installFromPath(home, sourcePath, { allowDowngrade });
+      // 安装结束（无论成败）清理临时产物，避免 tmp 目录长期积累
+      cleanupStagedPaths(cleanupPaths);
       appendLog(dataDir, {
         action: 'install.confirm', sourcePath, ok: r.ok, allowDowngrade,
         error: r.ok ? undefined : r.error,
@@ -592,7 +737,7 @@ export default function (app, ctx) {
           };
         });
         appendLog(dataDir, { action: 'install.local.multi', sourcePath, ok: true, count: candidates.length });
-        return c.json({ ok: true, multiple: true, candidates });
+        return c.json({ ok: true, multiple: true, candidates, stagingRoot: check.stagingRoot || null });
       }
 
       const risk = runRiskCheck(check, hanaVersion);
@@ -604,6 +749,7 @@ export default function (app, ctx) {
         version: check.manifest?.version || null,
         trust: check.manifest?.trust || null,
         sourcePath,
+        stagingRoot: check.stagingRoot || null, // confirm 后由 cleanupPaths 清理（目录来源为 null）
         risk,
         cleanupKey: null,
       });
@@ -652,9 +798,12 @@ export default function (app, ctx) {
     const home = currentHome();
     if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!id) return c.json({ ok: false, error: 'id 必填' }, 400);
+    // 白名单校验：非法 id 拒绝，防止降级写 preferences.json 时注入脏数据
+    const safeId = hanaApi.safePathSegment(id);
+    if (!safeId) return c.json({ ok: false, error: '非法插件 id' }, 400);
     if (typeof enabled !== 'boolean') return c.json({ ok: false, error: 'enabled 必须是 boolean' }, 400);
     try {
-      const r = await hanaApi.setPluginEnabled(home, id, enabled);
+      const r = await hanaApi.setPluginEnabled(home, safeId, enabled);
       if (r.ok) {
         appendLog(dataDir, { action: enabled ? 'enable' : 'disable', pluginId: id, ok: true });
         return c.json({ ok: true, id, enabled });
@@ -666,16 +815,16 @@ export default function (app, ctx) {
         try { prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf-8')); } catch { /* ignore */ }
       }
       let disabled = Array.isArray(prefs.disabled_plugins) ? prefs.disabled_plugins : [];
-      const idx = disabled.indexOf(id);
+      const idx = disabled.indexOf(safeId);
       if (enabled) {
         if (idx !== -1) disabled.splice(idx, 1);
       } else {
-        if (idx === -1) disabled.push(id);
+        if (idx === -1) disabled.push(safeId);
       }
       prefs.disabled_plugins = disabled;
       fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf-8');
-      appendLog(dataDir, { action: enabled ? 'enable' : 'disable', pluginId: id, ok: true, degraded: true });
-      return c.json({ ok: true, id, enabled, degraded: true, warning: '已写入本地配置，重启 Hana 后完全生效' });
+      appendLog(dataDir, { action: enabled ? 'enable' : 'disable', pluginId: safeId, ok: true, degraded: true });
+      return c.json({ ok: true, id: safeId, enabled, degraded: true, warning: '已写入本地配置，重启 Hana 后完全生效' });
     } catch (e) {
       return c.json({ ok: false, error: e.message }, 500);
     }
@@ -754,6 +903,16 @@ export default function (app, ctx) {
   });
 
   // ── 备份与还原 ─────────────────────────
+  /** 校验 backupDir 必须在备份根目录内（防越界删除/还原任意目录） */
+  function assertBackupDir(backupDir) {
+    if (!backupDir || typeof backupDir !== 'string') return null;
+    const root = path.resolve(backupRoot(dataDir));
+    const target = path.resolve(backupDir);
+    if (target !== root && !target.startsWith(root + path.sep)) return null;
+    if (!fs.existsSync(target)) return null;
+    return target;
+  }
+
   app.get('/api/backups', (c) => {
     return c.json({ ok: true, backups: listBackups(dataDir) });
   });
@@ -773,18 +932,20 @@ export default function (app, ctx) {
 
   app.post('/api/backup/note', async (c) => {
     const { backupDir, note } = await c.req.json();
-    if (!backupDir) return c.json({ ok: false, error: 'backupDir 缺失' }, 400);
-    const ok = updateBackupNote(backupDir, note);
+    const safe = assertBackupDir(backupDir);
+    if (!safe) return c.json({ ok: false, error: '备份目录不存在或不在备份根目录内' }, 400);
+    const ok = updateBackupNote(safe, note);
     if (!ok) return c.json({ ok: false, error: '备份目录不存在' }, 400);
     return c.json({ ok: true });
   });
 
   app.post('/api/backup/delete', async (c) => {
     const { backupDir } = await c.req.json();
-    if (!backupDir) return c.json({ ok: false, error: 'backupDir 缺失' }, 400);
-    const ok = deleteBackup(backupDir);
+    const safe = assertBackupDir(backupDir);
+    if (!safe) return c.json({ ok: false, error: '备份目录不存在或不在备份根目录内' }, 400);
+    const ok = deleteBackup(safe);
     if (!ok) return c.json({ ok: false, error: '删除失败' }, 400);
-    appendLog(dataDir, { action: 'backup.delete', backupDir, ok: true });
+    appendLog(dataDir, { action: 'backup.delete', backupDir: safe, ok: true });
     return c.json({ ok: true });
   });
 
@@ -793,11 +954,12 @@ export default function (app, ctx) {
     const { backupDir } = await c.req.json();
     const home = currentHome();
     if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
-    if (!backupDir) return c.json({ ok: false, error: 'backupDir 缺失' }, 400);
+    const safe = assertBackupDir(backupDir);
+    if (!safe) return c.json({ ok: false, error: '备份目录不存在或不在备份根目录内' }, 400);
     try {
-      const r = restorePlugins(dataDir, backupDir, home);
+      const r = restorePlugins(dataDir, safe, home);
       if (!r.ok) return c.json({ ok: false, error: r.error }, 400);
-      appendLog(dataDir, { action: 'restore.all', backupDir, ok: true, restored: r.restored.length, backupOfCurrent: r.backupOfCurrent });
+      appendLog(dataDir, { action: 'restore.all', backupDir: safe, ok: true, restored: r.restored.length, backupOfCurrent: r.backupOfCurrent });
       return c.json({ ok: true, ...r });
     } catch (e) {
       return c.json({ ok: false, error: e.message }, 500);
@@ -809,11 +971,12 @@ export default function (app, ctx) {
     const { backupDir, id } = await c.req.json();
     const home = currentHome();
     if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
-    if (!backupDir || !id) return c.json({ ok: false, error: 'backupDir/id 缺失' }, 400);
+    const safe = assertBackupDir(backupDir);
+    if (!safe || !id) return c.json({ ok: false, error: '备份目录不存在或不在备份根目录内 / id 缺失' }, 400);
     try {
-      const r = restorePlugin(dataDir, backupDir, home, id);
+      const r = restorePlugin(dataDir, safe, home, id);
       if (!r.ok) return c.json({ ok: false, error: r.error }, 400);
-      appendLog(dataDir, { action: 'restore.plugin', backupDir, pluginId: id, ok: true, backupOfCurrent: r.backupOfCurrent });
+      appendLog(dataDir, { action: 'restore.plugin', backupDir: safe, pluginId: id, ok: true, backupOfCurrent: r.backupOfCurrent });
       return c.json({ ok: true, ...r });
     } catch (e) {
       return c.json({ ok: false, error: e.message }, 500);
