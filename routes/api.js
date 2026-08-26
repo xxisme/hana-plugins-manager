@@ -58,6 +58,9 @@ const UPDATE_CHECK_CACHE = new Map(); // key: home -> { at, result, likelyRateLi
 
 export default function (app, ctx) {
   const dataDir = resolveDataDir();
+  // 自我标识与统一更新说明（onload 阶段 setContext.pluginId 已注入）
+  const SELF_PLUGIN_ID = (ctx && ctx.pluginId) || (getContext() && getContext().pluginId) || 'hana-plugins-manager';
+  const SELF_UPDATE_INSTRUCTIONS = '请打开仓库下载源码手动更新';
 
   // ── helpers ─────────────────────────────
   function currentHome() {
@@ -618,8 +621,34 @@ export default function (app, ctx) {
             risk: r,
           };
         });
+        // 拦截自我安装：合集仓库里若某项 manifest.id === self，禁止走完 install 链路
+        const selfHit = candidates.find((c) => c.pluginId === SELF_PLUGIN_ID);
+        if (selfHit) {
+          try { fs.rmSync(zipPath, { force: true }); } catch { /* ignore */ }
+          try { check.cleanup(); } catch { /* ignore */ }
+          appendLog(dataDir, { action: 'install.github.self-blocked', url, repo: info.repo, ok: false });
+          return c.json({
+            ok: false,
+            error: '不允许通过本插件重装本插件（会触发自我卸载）',
+            selfUpdate: true,
+            instructions: SELF_UPDATE_INSTRUCTIONS,
+          }, 400);
+        }
         appendLog(dataDir, { action: 'install.github.multi', url, ok: true, repo: info.repo, count: candidates.length });
         return c.json({ ok: true, multiple: true, repo: info.repo, candidates, stagedZip: zipPath, stagingRoot: check.stagingRoot || null });
+      }
+
+      // 拦截自我安装（单插件分支）：manifest.id === self 时拒绝并清理临时产物
+      if (check.manifest && check.manifest.id === SELF_PLUGIN_ID) {
+        try { fs.rmSync(zipPath, { force: true }); } catch { /* ignore */ }
+        try { check.cleanup(); } catch { /* ignore */ }
+        appendLog(dataDir, { action: 'install.github.self-blocked', url, repo: info.repo, ok: false });
+        return c.json({
+          ok: false,
+          error: '不允许通过本插件重装本插件（会触发自我卸载）',
+          selfUpdate: true,
+          instructions: SELF_UPDATE_INSTRUCTIONS,
+        }, 400);
       }
 
       const risk = runRiskCheck(check, hanaVersion);
@@ -736,8 +765,31 @@ export default function (app, ctx) {
             risk: r,
           };
         });
+        const selfHit = candidates.find((c) => c.pluginId === SELF_PLUGIN_ID);
+        if (selfHit) {
+          try { check.cleanup(); } catch { /* ignore */ }
+          appendLog(dataDir, { action: 'install.local.self-blocked', sourcePath, ok: false });
+          return c.json({
+            ok: false,
+            error: '不允许通过本插件重装本插件（会触发自我卸载）',
+            selfUpdate: true,
+            instructions: SELF_UPDATE_INSTRUCTIONS,
+          }, 400);
+        }
         appendLog(dataDir, { action: 'install.local.multi', sourcePath, ok: true, count: candidates.length });
         return c.json({ ok: true, multiple: true, candidates, stagingRoot: check.stagingRoot || null });
+      }
+
+      // 拦截自我安装（单插件分支）
+      if (check.manifest && check.manifest.id === SELF_PLUGIN_ID) {
+        try { check.cleanup(); } catch { /* ignore */ }
+        appendLog(dataDir, { action: 'install.local.self-blocked', sourcePath, ok: false });
+        return c.json({
+          ok: false,
+          error: '不允许通过本插件重装本插件（会触发自我卸载）',
+          selfUpdate: true,
+          instructions: SELF_UPDATE_INSTRUCTIONS,
+        }, 400);
       }
 
       const risk = runRiskCheck(check, hanaVersion);
@@ -860,6 +912,13 @@ export default function (app, ctx) {
             p.upstreamError = 'GitHub 返回 404：常见为私有仓库匿名不可见。点击「打开仓库」确认可访问后，配置 Token 重试';
           }
         }
+        // 自我更新：只能在更新面板看到“是否最新”状态，禁止在本插件里勾选更新
+        if (p.id === SELF_PLUGIN_ID) {
+          p.status = 'self-update-warning';
+          p.updateInstructions = SELF_UPDATE_INSTRUCTIONS;
+          // 勾选集合中排除自身：applyUpdates 只会读 hasUpdate，self 不为 hasUpdate 也不会被误勾
+          if (!p.localVersion || !p.remoteVersion) p.hasUpdate = false;
+        }
       }
       const likelyRateLimited = r.plugins.length > 0
         && r.plugins.every((p) => p.status === 'check-failed' && (p.upstreamError || '').includes('限流'));
@@ -877,6 +936,15 @@ export default function (app, ctx) {
     const home = currentHome();
     if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     if (!id) return c.json({ ok: false, error: 'id 必填' }, 400);
+    // 拦截自我更新：避免在本插件上下文里自我卸载导致插件离线 + 前端 HTTP 请求中断
+    if (id === SELF_PLUGIN_ID) {
+      return c.json({
+        ok: false,
+        error: '不允许通过本插件更新本插件（会触发自我卸载）',
+        selfUpdate: true,
+        instructions: SELF_UPDATE_INSTRUCTIONS,
+      }, 400);
+    }
     try {
       const prep = await prepareUpdate(id, dataDir);
       if (!prep.ok) return c.json({ ok: false, error: prep.error }, 400);

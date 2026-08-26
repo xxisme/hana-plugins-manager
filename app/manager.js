@@ -943,6 +943,12 @@
     const body = $('update-body');
     updateSelectSummary();
     if (!STATE.updates.length) { body.innerHTML = '<div class="empty"><h3>暂无已关联 GitHub 的插件</h3><p>在插件详情里关联仓库地址后即可检测更新</p></div>'; return; }
+    // 本插件置顶：self-update-warning 排在最前，其余保持原序
+    const ordered = [...STATE.updates].sort((a, b) => {
+      const aSelf = a.status === 'self-update-warning' ? 0 : 1;
+      const bSelf = b.status === 'self-update-warning' ? 0 : 1;
+      return aSelf - bSelf;
+    });
     const STATUS_META = {
       'outdated':      { chipCls: 'outdated',      label: '可更新' },
       'latest':        { chipCls: 'latest',        label: '已最新' },
@@ -950,9 +956,11 @@
       'check-failed':  { chipCls: 'failed',        label: '检测失败' },
       'upstream-404':  { chipCls: 'upstream-404',  label: '仓库 404' },
       'no-version':    { chipCls: 'no-version',    label: '无 version' },
+      'self-update-warning': { chipCls: 'self',   label: '本插件·不走本页面更新' },
     };
-    const rows = STATE.updates.map((p) => {
+    const rows = ordered.map((p) => {
       const meta = STATUS_META[p.status] || { chipCls: '', label: p.status };
+      const isSelf = p.status === 'self-update-warning';
       const errStatus = p.status === 'check-failed' || p.status === 'upstream-404' || p.status === 'no-version';
       const ghLink = p.github && p.github.url
         ? `<a class="upd-gh" href="${esc(p.github.url)}" target="_blank" rel="noopener" title="${esc(p.github.url)}">打开仓库</a>`
@@ -961,18 +969,32 @@
       const tokenBtn = !hasToken
         ? `<button class="upd-gh" data-cfg-token title="为私有仓库或限流场景配置 GitHub Token">配置 Token</button>`
         : '';
-      const versionCell = p.hasUpdate
-        ? `<span class="version-compare">${esc(p.localVersion || '?')} <span class="arrow">→</span> ${esc(p.remoteVersion || '?')}</span>`
-        : (errStatus
-          ? `<div class="upd-err">${esc(p.upstreamError || p.error || '检测失败')} ${ghLink} ${tokenBtn}</div>`
-          : '<span class="version-compare">—</span>');
-      const hasSource = p.status !== 'no-source';
-      const selected = STATE.updateSel.has(p.id);
-      const cb = hasSource
-        ? `<span class="cb${selected ? ' on' : ''}" data-uid="${esc(p.id)}" title="点击选择/重试">${selected ? CHECK_ICON : ''}</span>`
-        : '';
+      let versionCell;
+      if (isSelf) {
+        // 本插件自我检测：不勾选不更新，以「提示说明」代替版本/错误文案
+        const versionLine = (p.localVersion || p.remoteVersion)
+          ? `<span class="version-compare">v${esc(p.localVersion || '?')} → v${esc(p.remoteVersion || '?')}</span>`
+          : '<span class="version-compare">—</span>';
+        versionCell = `<div class="upd-self">
+          <div class="upd-self-line">${versionLine} <span class="upd-self-tip">${esc(p.updateInstructions || '请打开仓库下载源码手动更新')}</span></div>
+          ${ghLink}
+        </div>`;
+      } else if (p.hasUpdate) {
+        versionCell = `<span class="version-compare">${esc(p.localVersion || '?')} <span class="arrow">→</span> ${esc(p.remoteVersion || '?')}</span>`;
+      } else if (errStatus) {
+        versionCell = `<div class="upd-err">${esc(p.upstreamError || p.error || '检测失败')} ${ghLink} ${tokenBtn}</div>`;
+      } else {
+        versionCell = '<span class="version-compare">—</span>';
+      }
+      // 本插件不提供勾选位：空格占位避免选列错位
+      const cb = isSelf
+        ? '<span class="cb-empty" title="本插件不走本页面更新">—</span>'
+        : (p.status !== 'no-source'
+          ? `<span class="cb${STATE.updateSel.has(p.id) ? ' on' : ''}" data-uid="${esc(p.id)}" title="点击选择/重试">${STATE.updateSel.has(p.id) ? CHECK_ICON : ''}</span>`
+          : '');
+      const selectable = !isSelf && p.status !== 'no-source';
       return `
-      <tr data-uid="${esc(p.id)}" class="upd-row${hasSource ? ' selectable' : ''}${selected ? ' selected' : ''}">
+      <tr data-uid="${esc(p.id)}" class="upd-row${selectable ? ' selectable' : ''}${STATE.updateSel.has(p.id) ? ' selected' : ''}">
         <td>${cb}</td>
         <td>${esc(p.name || p.id)}</td>
         <td>${versionCell}</td>

@@ -11,11 +11,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { setContext } from './lib/plugin-context.js';
 import { getCurrentDshHome } from './lib/homes.js';
+import { readSources, writeSources } from './lib/sources.js';
 import { ensureLogFile } from './lib/operation-log.js';
 
 const TMP_DIR = 'tmp';
+
+// 插件 id 单一事实源：manifest.json（以免多处硬编码导致不一致）
+let SELF_PLUGIN_ID = 'hana-plugins-manager';
+try {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const m = JSON.parse(fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf-8'));
+  if (m && typeof m.id === 'string' && m.id.trim()) SELF_PLUGIN_ID = m.id.trim();
+} catch { /* 读不到则退到默认值，不阻断启动 */ }
 
 // Agent 工具定义列表
 const TOOL_DEFINITIONS = [
@@ -42,6 +52,7 @@ export default class HanaPluginsManager {
     this._dataDir = null;
     this._log = console;
     this._toolDisposers = [];
+    this._pluginId = SELF_PLUGIN_ID;
   }
 
   async onload(ctx) {
@@ -76,10 +87,33 @@ export default class HanaPluginsManager {
       hanaHome: this._hanaHome,
       dataDir: this._dataDir,
       log: this._log,
+      pluginId: this._pluginId,
       configGet: (key) => {
         try { return this.ctx.config?.get?.(key); } catch { return undefined; }
       },
     });
+
+    // 首次加载：自动写入本插件的 GitHub 关联，便于更新检测。
+    // 手动覆盖场景：用户在详情抽屉改成别的仓库时仍可。
+    if (dataDir) {
+      try {
+        const sources = readSources(dataDir);
+        if (!sources[this._pluginId]) {
+          sources[this._pluginId] = {
+            githubUrl: 'https://github.com/xxisme/hana-plugins-manager',
+            repo: 'xxisme/hana-plugins-manager',
+            owner: 'xxisme',
+            repoName: 'hana-plugins-manager',
+            branch: 'master',
+            updatedAt: new Date().toISOString(),
+          };
+          writeSources(dataDir, sources);
+          this._log.info?.(`[hana-plugins-manager] 已自动写入 self source（用于版本检测）`);
+        }
+      } catch (e) {
+        this._log.warn?.(`[hana-plugins-manager] 自动写入 self source 失败: ${e.message}`);
+      }
+    }
 
     await this._syncTools();
   }

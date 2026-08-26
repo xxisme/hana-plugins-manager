@@ -331,6 +331,12 @@ html, body {
 .upd-gh:hover { background: #fff; border-color: var(--ink-soft); box-shadow: var(--shadow-sm); }
 .version-compare { font-size: 11px; color: var(--text-2); }
 .version-compare .arrow { color: var(--ink-soft); margin: 0 4px; }
+/* 本插件自我检测的提示行：醒目的设计息，不要勾选不要点击 */
+.status-chip.self { background: rgba(166, 123, 63, 0.18); color: #8a6a32; border: 1px solid rgba(166, 123, 63, 0.32); font-weight: 600; }
+.upd-self { font-size: 11.5px; color: var(--text-2); line-height: 1.55; }
+.upd-self-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.upd-self-tip { color: #8a6a32; background: rgba(166, 123, 63, 0.10); padding: 1px 8px; border-radius: 999px; font-size: 11px; }
+.cb-empty { display: inline-block; width: 16px; text-align: center; color: var(--ink-faint); font-size: 12px; }
 
 /* ── 备份页 ──────────────────────────── */
 .backup-list { list-style: none; }
