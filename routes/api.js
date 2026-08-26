@@ -376,12 +376,16 @@ export default function (app, ctx) {
         if (!parsed) continue;
         // 排除本机已装（无论是否最新）：按 owner/repo 归一比对，合集仓库子插件也能命中
         if (installed.has(parsed.repo.toLowerCase())) continue;
+        // stars 缺字段/非数字归 0；前端只在 >0 时渲染，0 不显式画"0 ★"
+        const starsRaw = Number(it.stars);
+        const stars = Number.isFinite(starsRaw) && starsRaw >= 0 ? Math.floor(starsRaw) : 0;
         plugins.push({
           github: gh0,   // 保留原始地址（可能含 /tree/... 子路径，合集子插件可辨）
           repo: parsed.repo,
           owner: parsed.owner,
           repoName: parsed.repoName,
           description: String(it.description || '').trim(),
+          stars,
         });
       }
       discoverCache = { at: Date.now(), data: { plugins, lastUpdated: j.lastUpdated || null } };
