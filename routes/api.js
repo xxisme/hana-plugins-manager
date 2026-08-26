@@ -315,12 +315,12 @@ export default function (app, ctx) {
   });
 
   // ── 可安装插件发现 ──────────────────────
-  // 三级数据源：live（GitHub Search API 实时抓取三个 topic）→ 磁盘缓存 → 静态清单 JSON。
+  // 三级数据源：live（GitHub Search API 实时抓取四个 topic）→ 磁盘缓存 → 静态清单 JSON。
   // 参考 skill「hana-plugin-topic-harvester」的抓取/过滤规则，把人工流水线内嵌为插件能力。
-  const DISCOVER_TOPICS = ['oh-plugin', 'openhanako-plugin', 'hanaagent-plugin'];
+  const DISCOVER_TOPICS = ['oh-plugin', 'openhanako-plugin', 'hanaagent-plugin', 'oh-apps'];
   const DISCOVER_URL = 'https://raw.githubusercontent.com/xxisme/hana-plugins-manager/master/hanaagent-plugins.json';
   const CACHE_FILE = 'discover-cache.json';
-  const LIVE_TTL = 30 * 60 * 1000;    // live 结果内存缓存 30min（Search API 匿名限流 60 次/h，3 个 topic=3 次）
+  const LIVE_TTL = 30 * 60 * 1000;    // live 结果内存缓存 30min（Search API 匿名限流 60 次/h，4 个 topic=4 次）
   const JSON_TTL = 30 * 60 * 1000;    // 静态 JSON 结果内存缓存 30min（raw 域名不受 api.github.com 限流，但保一致性）
   let discoverLiveCache = { at: 0, data: null };   // live 内存缓存
   let discoverJsonCache = { at: 0, data: null };    // json 兜底内存缓存
@@ -346,7 +346,7 @@ export default function (app, ctx) {
     const name = String(repo.name || '').toLowerCase();
     const desc = String(repo.description || '').toLowerCase();
     const topics = Array.isArray(repo.topics) ? repo.topics.map((t) => String(t).toLowerCase()) : [];
-    const hasPluginTopic = topics.some((t) => ['oh-plugin', 'openhanako-plugin', 'hanaagent-plugin'].includes(t));
+    const hasPluginTopic = topics.some((t) => ['oh-plugin', 'openhanako-plugin', 'hanaagent-plugin', 'oh-apps'].includes(t));
 
     // 1) skill 类：名字或描述强调是 skill，且没有有效 plugin topic
     const skillish = name.includes('skill') || desc.includes('skill') || topics.some((t) => t.startsWith('skill'));

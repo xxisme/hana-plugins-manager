@@ -653,7 +653,7 @@
     const s = (STATE.discover && STATE.discover.source) || '';
     const fetchedAt = (STATE.discover && STATE.discover.fetchedAt) || '';
     const note = (STATE.discover && STATE.discover.cacheNote) || '';
-    const srcLabel = { live: '实时抓取 GitHub 三个 topic', 'live-cache': '实时抓取（30min 缓存）', cache: '上次快照（实时抓取失败）', json: '静态清单兜底', 'json-cache': '静态清单兜底（缓存）' }[s] || '';
+    const srcLabel = { live: '实时抓取 GitHub 四个 topic', 'live-cache': '实时抓取（30min 缓存）', cache: '上次快照（实时抓取失败）', json: '静态清单兜底', 'json-cache': '静态清单兜底（缓存）' }[s] || '';
     const srcCls = { live: 'ok', 'live-cache': 'ok', cache: 'warn', json: 'warn', 'json-cache': 'warn' }[s] || '';
     el.innerHTML = `<span class="src-chip ${srcCls}">${esc(srcLabel || s || '')}</span>`
       + (fetchedAt ? `<span class="src-time">更新于 ${esc(timeAgo(fetchedAt))}</span>` : '')
@@ -971,14 +971,25 @@
         : '';
       let versionCell;
       if (isSelf) {
-        // 本插件自我检测：不勾选不更新，以「提示说明」代替版本/错误文案
-        const versionLine = (p.localVersion || p.remoteVersion)
-          ? `<span class="version-compare">v${esc(p.localVersion || '?')} → v${esc(p.remoteVersion || '?')}</span>`
-          : '<span class="version-compare">—</span>';
-        versionCell = `<div class="upd-self">
-          <div class="upd-self-line">${versionLine} <span class="upd-self-tip">${esc(p.updateInstructions || '请打开仓库下载源码手动更新')}</span></div>
-          ${ghLink}
-        </div>`;
+        // 本插件自我检测：不走本页面更新，只展示版本对比 + 打开仓库入口
+        const sameVersion = !!(p.localVersion && p.remoteVersion && p.localVersion === p.remoteVersion);
+        if (sameVersion) {
+          // 本地与远端一致：收起无意义箭头与「请打开仓库下载源码手动更新」提示,
+          // 用绿色边框「已最新」代替版本号,避免「v0.1.0 → v0.1.0」这种伪变更误导
+          versionCell = `<div class="upd-self">
+            <span class="upd-latest">✓ 已最新</span>
+            ${ghLink}
+          </div>`;
+        } else {
+          // 真正存在版本差异：显示箭头 + 下载提示
+          const versionLine = (p.localVersion || p.remoteVersion)
+            ? `<span class="version-compare">v${esc(p.localVersion || '?')} → v${esc(p.remoteVersion || '?')}</span>`
+            : '<span class="version-compare">—</span>';
+          versionCell = `<div class="upd-self">
+            <div class="upd-self-line">${versionLine} <span class="upd-self-tip">${esc(p.updateInstructions || '请打开仓库下载源码手动更新')}</span></div>
+            ${ghLink}
+          </div>`;
+        }
       } else if (p.hasUpdate) {
         versionCell = `<span class="version-compare">${esc(p.localVersion || '?')} <span class="arrow">→</span> ${esc(p.remoteVersion || '?')}</span>`;
       } else if (errStatus) {
