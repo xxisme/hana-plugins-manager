@@ -1,0 +1,13 @@
+# 开发辅助目录（不纳入版本控制）
+.codebuddy/
+
+# 防御性忽略：密钥/凭据类文件（防止误提交）
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials*
+secret*
