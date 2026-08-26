@@ -645,7 +645,11 @@
         : '';
       return `
       <div class="discover-card${selected ? ' selected' : ''}" data-repo="${esc(p.repo)}" style="animation:cardIn 300ms ${Math.min(i * 20, 400)}ms backwards">
-        <div class="discover-name">${esc(p.repoName || p.repo)} <span class="discover-owner">${esc(p.owner)}</span>${starsBadge}</div>
+        <div class="discover-head">
+          <div class="discover-name">${esc(p.repoName || p.repo)}</div>
+          ${starsBadge}
+        </div>
+        <div class="discover-owner">${esc(p.owner)}</div>
         <div class="discover-desc">${esc(p.description || '（无描述）')}</div>
         <div class="discover-foot">
           <span class="discover-repo">${esc(p.repo)}</span>
