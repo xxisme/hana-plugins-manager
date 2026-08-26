@@ -1024,7 +1024,7 @@ export default function (app, ctx) {
     if (!home) return c.json({ ok: false, error: '未配置 Hana 主目录' }, 400);
     try {
       const dir = backupPlugins(dataDir, home);
-      const removed = cleanupOldBackups(dataDir, 10);
+      const removed = cleanupOldBackups(dataDir, 5);
       appendLog(dataDir, { action: 'backup', ok: true, backupDir: dir, removed });
       return c.json({ ok: true, backupDir: dir, removed });
     } catch (e) {

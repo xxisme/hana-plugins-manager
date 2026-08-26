@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "hana-plugins-manager",
   "name": "小花插件管理",
-  "version": "0.10.1",
+  "version": "0.10.4",
   "description": "管理本机 Hana 的插件：列表/安装/更新/卸载/启停/备份还原，支持 GitHub 源码与本地 zip 导入。",
   "trust": "full-access",
   "minAppVersion": "0.82.0",
