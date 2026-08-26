@@ -1001,6 +1001,10 @@
         versionCell = `<span class="version-compare">${esc(p.localVersion || '?')} <span class="arrow">→</span> ${esc(p.remoteVersion || '?')}</span>`;
       } else if (errStatus) {
         versionCell = `<div class="upd-err">${esc(p.upstreamError || p.error || '检测失败')} ${ghLink} ${tokenBtn}</div>`;
+      } else if (p.localVersion) {
+        // 已最新 / 未关联：显示本地版本号（后端 localVersion 全程有值）,
+        // 让用户随时能看到每个插件装的是什么版本,而不是只有可更新时才显示
+        versionCell = `<span class="version-compare">v${esc(p.localVersion)}</span>`;
       } else {
         versionCell = '<span class="version-compare">—</span>';
       }
