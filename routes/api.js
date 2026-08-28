@@ -585,11 +585,6 @@ export default function (app, ctx) {
 
   // ── 安装：GitHub 应用（下载+风险检测）──
   // 返回 staged 信息 + 风险报告；前端确认后调用 /api/install/confirm 实际安装
-  /** 从 release 资产里挑选最合适的 zip：优先文件名含 repoName，其次第一个 */
-  function pickReleaseAsset(assets, repoName) {
-    const n = String(repoName || '').toLowerCase();
-    return assets.find((a) => String(a.name || '').toLowerCase().includes(n)) || assets[0] || null;
-  }
   app.post('/api/install/github-apply', async (c) => {
     const { url } = await c.req.json();
     if (!url) return c.json({ ok: false, error: 'url 必填' }, 400);
@@ -609,7 +604,7 @@ export default function (app, ctx) {
       let check = null;
       const rel = await gh.getLatestRelease(info.owner, info.repoName, dataDir);
       if (rel.ok && Array.isArray(rel.assets) && rel.assets.length) {
-        const asset = pickReleaseAsset(rel.assets, info.repoName);
+        const asset = gh.pickReleaseAsset(rel.assets, info.repoName);
         const relZip = path.join(workRoot, `release-${info.repoName}-${Date.now()}.zip`);
         const dlRel = await gh.downloadReleaseAsset(asset, relZip, dataDir);
         if (dlRel.ok) {
