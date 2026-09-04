@@ -8,7 +8,7 @@ import path from 'node:path';
 import * as gh from '../lib/github.js';
 import { checkLocalSource } from '../lib/zip-check.js';
 
-const dataDir = path.join(os.tmpdir(), 'test-upd-data');
+const dataDir = 'C:/Users/Administrator/.hanako/plugin-data/hana-plugins-manager';
 const workRoot = path.join(dataDir, 'tmp');
 fs.mkdirSync(workRoot, { recursive: true });
 
