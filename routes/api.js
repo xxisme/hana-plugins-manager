@@ -605,7 +605,7 @@ export default function (app, ctx) {
       const rel = await gh.getLatestRelease(info.owner, info.repoName, dataDir);
       if (rel.ok && Array.isArray(rel.assets) && rel.assets.length) {
         const asset = gh.pickReleaseAsset(rel.assets, info.repoName);
-        const relZip = path.join(workRoot, `release-${info.repoName}-${Date.now()}.zip`);
+        const relZip = path.join(workRoot, `release-${info.repoName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.zip`);
         const dlRel = await gh.downloadReleaseAsset(asset, relZip, dataDir);
         if (dlRel.ok) {
           const ck = checkLocalSource(relZip, workRoot);
@@ -621,7 +621,7 @@ export default function (app, ctx) {
         }
       }
       if (!zipPath) {
-        const srcZip = path.join(workRoot, `${info.repoName}-${Date.now()}.zip`);
+        const srcZip = path.join(workRoot, `${info.repoName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.zip`);
         const dl = await gh.downloadRepoZip(info.owner, info.repoName, info.defaultBranch, srcZip, dataDir);
         if (!dl.ok) return c.json({ ok: false, error: dl.error }, 400);
         check = checkLocalSource(srcZip, workRoot);
@@ -665,8 +665,8 @@ export default function (app, ctx) {
         return c.json({ ok: true, multiple: true, repo: info.repo, candidates, source, stagedZip: zipPath, stagingRoot: check.stagingRoot || null });
       }
 
-      // 拦截自我安装（单插件分支）：manifest.id === self 时拒绝并清理临时产物
-      if (check.manifest && check.manifest.id === SELF_PLUGIN_ID) {
+      // 拦截自我安装（单插件分支）：manifest.id 或目录名命中 self 时拒绝并清理临时产物
+      if (isSelfPackage(check, zipPath)) {
         try { fs.rmSync(zipPath, { force: true }); } catch { /* ignore */ }
         try { check.cleanup(); } catch { /* ignore */ }
         appendLog(dataDir, { action: 'install.github.self-blocked', url, repo: info.repo, ok: false });
@@ -711,8 +711,9 @@ export default function (app, ctx) {
     for (const p of paths) {
       try {
         const r = path.resolve(String(p));
-        // 只允许清理 tmp 内的内部产物（staging 解压目录 / 下载的 zip）
-        if (r === rootNorm || r.startsWith(rootNorm + path.sep)) {
+        // 只允许清理 tmp 内的「内部产物」（staging 解压目录 / 下载的 zip）；
+        // 明确排除 tmp 根目录本身——否则一次误传会把所有 in-flight 安装/下载产物全清掉
+        if (r !== rootNorm && r.startsWith(rootNorm + path.sep)) {
           fs.rmSync(r, { recursive: true, force: true });
         }
       } catch { /* ignore */ }
@@ -809,8 +810,8 @@ export default function (app, ctx) {
         return c.json({ ok: true, multiple: true, candidates, stagingRoot: check.stagingRoot || null });
       }
 
-      // 拦截自我安装（单插件分支）
-      if (check.manifest && check.manifest.id === SELF_PLUGIN_ID) {
+      // 拦截自我安装（单插件分支）：manifest.id 或目录名命中 self
+      if (isSelfPackage(check, sourcePath)) {
         try { check.cleanup(); } catch { /* ignore */ }
         appendLog(dataDir, { action: 'install.local.self-blocked', sourcePath, ok: false });
         return c.json({
@@ -854,9 +855,9 @@ export default function (app, ctx) {
 
       const r = await hanaApi.uninstallPlugin(home, safeId);
       if (r.ok) {
-        // 清理 GitHub 关联
-        setSource(dataDir, id, '');
-        appendLog(dataDir, { action: 'uninstall', pluginId: id, ok: true, backupDir });
+        // 清理 GitHub 关联（统一用白名单化后的 safeId，避免原始 id 含特殊字符时清错条目）
+        setSource(dataDir, safeId, '');
+        appendLog(dataDir, { action: 'uninstall', pluginId: safeId, ok: true, backupDir });
         return c.json({ ok: true, backupDir });
       }
       // API 失败降级：直接删目录 + 清 disabled
@@ -980,20 +981,22 @@ export default function (app, ctx) {
       // 定位实际安装根：prep.pluginRoot（prepareUpdate 显式返回）兜底 prep.check.pluginRoot
       const installTarget = prep.pluginRoot || (prep.check && prep.check.pluginRoot);
       if (!installTarget) return c.json({ ok: false, error: '未定位到插件根目录' }, 400);
-      const installed = await hanaApi.installFromPath(home, installTarget, { allowDowngrade });
-      // 清理 staging
-      try { prep.check.cleanup(); } catch { /* ignore */ }
-      try { fs.rmSync(prep.zipPath, { force: true }); } catch { /* ignore */ }
-
-      appendLog(dataDir, {
-        action: 'update', pluginId: id, ok: installed.ok, allowDowngrade,
-        riskLevel: prep.risk.level,
-        error: installed.ok ? undefined : installed.error,
-      });
-      if (!installed.ok) return c.json({ ok: false, error: installed.error, status: installed.status }, installed.status || 500);
-      // 更新成功清缓存
-      UPDATE_CHECK_CACHE.delete(home);
-      return c.json({ ok: true, installed: installed.data, risk: prep.risk });
+      try {
+        const installed = await hanaApi.installFromPath(home, installTarget, { allowDowngrade });
+        appendLog(dataDir, {
+          action: 'update', pluginId: id, ok: installed.ok, allowDowngrade,
+          riskLevel: prep.risk.level,
+          error: installed.ok ? undefined : installed.error,
+        });
+        if (!installed.ok) return c.json({ ok: false, error: installed.error, status: installed.status }, installed.status || 500);
+        // 更新成功清缓存
+        UPDATE_CHECK_CACHE.delete(home);
+        return c.json({ ok: true, installed: installed.data, risk: prep.risk });
+      } finally {
+        // 无论安装成功/抛异常都清理 staging 与 zip，防 tmp 目录在反复失败时无限堆积
+        try { prep.check.cleanup(); } catch { /* ignore */ }
+        try { fs.rmSync(prep.zipPath, { force: true }); } catch { /* ignore */ }
+      }
     } catch (e) {
       return c.json({ ok: false, error: e.message }, 500);
     }
@@ -1008,6 +1011,20 @@ export default function (app, ctx) {
     if (target !== root && !target.startsWith(root + path.sep)) return null;
     if (!fs.existsSync(target)) return null;
     return target;
+  }
+
+  /**
+   * 自我来源判定（防御兜底）：manifest.id 命中 self，或插件根目录名/来源文件名命中 self。
+   * 根目录无 manifest 的裸目录 zip 装上会以目录名注册为插件 id，同样会触发自我卸载——
+   * 只查 manifest.id 会漏掉这类路径，这里补目录名判断。
+   */
+  function isSelfPackage(check, sourceLabel) {
+    if (!check) return false;
+    if (check.manifest && check.manifest.id === SELF_PLUGIN_ID) return true;
+    const base = check.pluginRoot ? path.basename(check.pluginRoot) : '';
+    if (base && base === SELF_PLUGIN_ID) return true;
+    if (sourceLabel && path.basename(String(sourceLabel), '.zip') === SELF_PLUGIN_ID) return true;
+    return false;
   }
 
   app.get('/api/backups', (c) => {
@@ -1031,7 +1048,7 @@ export default function (app, ctx) {
     const { backupDir, note } = await c.req.json();
     const safe = assertBackupDir(backupDir);
     if (!safe) return c.json({ ok: false, error: '备份目录不存在或不在备份根目录内' }, 400);
-    const ok = updateBackupNote(safe, note);
+    const ok = updateBackupNote(dataDir, safe, note);
     if (!ok) return c.json({ ok: false, error: '备份目录不存在' }, 400);
     return c.json({ ok: true });
   });
@@ -1040,7 +1057,7 @@ export default function (app, ctx) {
     const { backupDir } = await c.req.json();
     const safe = assertBackupDir(backupDir);
     if (!safe) return c.json({ ok: false, error: '备份目录不存在或不在备份根目录内' }, 400);
-    const ok = deleteBackup(safe);
+    const ok = deleteBackup(dataDir, safe);
     if (!ok) return c.json({ ok: false, error: '删除失败' }, 400);
     appendLog(dataDir, { action: 'backup.delete', backupDir: safe, ok: true });
     return c.json({ ok: true });

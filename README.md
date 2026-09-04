@@ -1,6 +1,6 @@
 # 小花插件管理（hana-plugins-manager）
 
-> **版本：0.10.8** · 管理本机 Hana 插件的完整工具
+> **版本：0.10.9** · 管理本机 Hana 插件的完整工具
 
 在一个页面内完成插件的全生命周期管理：列表、安装、更新、卸载、启停、备份、GitHub 关联与上游版本检测。
 
@@ -104,6 +104,7 @@
 
 | 版本 | 说明 |
 |---|---|
+| 0.10.9 | 全量代码审查后的加固：cleanupPaths 禁止删 tmp 根（防误清 in-flight 产物）；更新链路 cleanup 改 try/finally 防泄漏；更新与安装对齐（release 包结构坏自动回退源码）；backup lib 层越界校验 + 备份/还原跳符号链接；release 优先分支加 expectId 守护（防关联错仓库误报）；REPO_INFO_CACHE 并发去重 + 5min TTL；zip 解压 256MB 上限 + 目录 BFS 节点上限；自我安装按目录名兑底拦截；tmp 命名加随机后缀防并发覆盖 |
 | 0.10.8 | 合集仓库防串版：检测传入本地插件 id（expectId），仅采纳 manifest.id/目录名匹配的子插件版本，上游改名/移除时明确提示；检测与下载同源：单插件仓库（含构建型，根仅 package.json）以 release 为权威（含 pre-release），源码 manifest 超前不再造成"可更新 X 却装成 Y"死循环；合集仓库不再用整仓 release tag 兜底版本 |
 | 0.10.7 | 版本检测/安装/更新统一取最高版本（含 pre-release）：修复"检测显示可更新 X、下载却永远装成正式版 Y"的不同步（dsh-hanako 类 pre-release 发布仓库此前死循环）；getLatestRelease 改为拉取 release 列表按版本号取最高，draft 排除 |
 | 0.10.6 | 更新链路修复与展示优化：合集仓库多子插件更新检测失效修复（嵌套目录逐子探测）；更新页版本列始终显示本地版本号（已最新/未关联不再显示空白破折号）；更新环节与安装环节对齐 Release 优先（源码项目更新也能成功）；资产选择函数 pickReleaseAsset 上提 lib/github.js 共用 |

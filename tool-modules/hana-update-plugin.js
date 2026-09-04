@@ -30,11 +30,15 @@ export async function execute(input = {}) {
     if (id && input.apply) {
       const prep = await prepareUpdate(id, dataDir);
       if (!prep.ok) return { ok: false, error: prep.error };
-      const installed = await hanaApi.installFromPath(home, prep.pluginRoot, {});
-      try { prep.check.cleanup(); } catch { /* ignore */ }
-      try { fs.rmSync(prep.zipPath, { force: true }); } catch { /* ignore */ }
-      appendLog(dataDir, { action: 'update', pluginId: id, ok: installed.ok, via: 'agent', riskLevel: prep.risk.level });
-      return { ok: installed.ok, pluginId: id, installed: installed.ok, riskLevel: prep.risk.level, error: installed.ok ? undefined : installed.error };
+      try {
+        const installed = await hanaApi.installFromPath(home, prep.pluginRoot, {});
+        appendLog(dataDir, { action: 'update', pluginId: id, ok: installed.ok, via: 'agent', riskLevel: prep.risk.level });
+        return { ok: installed.ok, pluginId: id, installed: installed.ok, riskLevel: prep.risk.level, error: installed.ok ? undefined : installed.error };
+      } finally {
+        // 无论安装成功/抛异常都清理 staging 与 zip，防 tmp 目录反复失败时无限堆积
+        try { prep.check.cleanup(); } catch { /* ignore */ }
+        try { fs.rmSync(prep.zipPath, { force: true }); } catch { /* ignore */ }
+      }
     }
 
     // 仅检查

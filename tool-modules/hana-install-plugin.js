@@ -57,7 +57,7 @@ export async function execute(input = {}) {
       if (!info.ok) return { ok: false, error: info.error };
       const workRoot = path.join(dataDir, 'tmp');
       fs.mkdirSync(workRoot, { recursive: true });
-      const zipPath = path.join(workRoot, `${info.repoName}-${Date.now()}.zip`);
+      const zipPath = path.join(workRoot, `${info.repoName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.zip`);
       zipPathToRemove = zipPath;
       const dl = await gh.downloadRepoZip(info.owner, info.repoName, info.defaultBranch, zipPath, dataDir);
       if (!dl.ok) return { ok: false, error: dl.error };
